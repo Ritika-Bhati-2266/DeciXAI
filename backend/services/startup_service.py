@@ -378,6 +378,72 @@ def _startup_stage(score: float) -> str:
     return 'Idea-validation'
 
 
+def _vertical_playbook(market_type: str) -> dict:
+    """Vertical-specific compliance / GTM nuances.
+
+    Additive only — callers merge these into phase tasks so the base
+    Validate -> Build -> Traction -> Raise skeleton never changes.
+    """
+    playbooks = {
+        'fintech': {
+            'label': 'Fintech (regulated)',
+            'validate_add': 'Map RBI/compliance perimeter early — decide regulated vs partner-led (NBFC/Bank-as-a-service) path.',
+            'build_add': 'Ship KYC/KYB, audit logs, and reconciliation from day one; sandbox with 1 compliance reviewer.',
+            'traction_kpi': 'Approval rate ≥95% + reconciliation breaks <0.5% + 2 live partners.',
+            'hire': 'Compliance/finance-ops hire by Day 60 (fractional ok).',
+        },
+        'health': {
+            'label': 'HealthTech (trust-critical)',
+            'validate_add': 'Validate clinical workflow with 3 practitioners; list data-privacy (DPDP/HIPAA-aware) requirements.',
+            'build_add': 'Add consent management, data retention policy, and clinician review loop before launch.',
+            'traction_kpi': 'Pilot retention ≥60% at 4 weeks + clinician NPS ≥40.',
+            'hire': 'Clinical/domain advisor + QA-focused engineer by Day 60.',
+        },
+        'edtech': {
+            'label': 'EdTech (outcomes-driven)',
+            'validate_add': 'Define one measurable learning outcome; pre-sell to 2 institutions/cohorts.',
+            'build_add': 'Instrument learning analytics (completion, assessment lift) from first release.',
+            'traction_kpi': 'Completion ≥40% + NPS ≥35 on core cohort.',
+            'hire': 'Content/curriculum + community lead by Day 60.',
+        },
+        'saas': {
+            'label': 'B2B SaaS (sales-led)',
+            'validate_add': 'Nail one repeatable job-to-be-done; get 2 paid LOIs before building admin extras.',
+            'build_add': 'Ship SSO-ready auth, roles, usage metering, and admin audit trail.',
+            'traction_kpi': '3 paid pilots + ≥1 expansion + NDR signal.',
+            'hire': 'Founding AE / founder-led sales with SDR support by Day 90.',
+        },
+        'ecommerce': {
+            'label': 'Commerce (retention-led)',
+            'validate_add': 'Prove repeat purchase on one hero SKU/category before expanding catalog.',
+            'build_add': 'Instrument returns, CAC payback, and repeat-rate dashboards.',
+            'traction_kpi': 'Repeat rate ≥25% + CAC payback <90 days.',
+            'hire': 'Growth/performance marketer (part-time ok) by Day 60.',
+        },
+        'climate': {
+            'label': 'Climate (capex-aware)',
+            'validate_add': 'Validate unit economics + policy/tender dependency with 2 buyers.',
+            'build_add': 'Meter impact metrics (CO2/kWh/cost saved) alongside product analytics.',
+            'traction_kpi': '2 paid deployments + measured impact report.',
+            'hire': 'Field ops / partnerships lead by Day 90.',
+        },
+        'crypto': {
+            'label': 'Crypto (security-first)',
+            'validate_add': 'Define custody/key-management and regulatory stance in writing before launch.',
+            'build_add': 'External audit for contracts + bug-bounty before mainnet funds.',
+            'traction_kpi': 'Audited release + TVL/usage with 0 criticals.',
+            'hire': 'Security auditor (external) + protocol engineer.',
+        },
+    }
+    return playbooks.get((market_type or '').lower(), {
+        'label': f"{(market_type or 'General').title()} vertical",
+        'validate_add': '',
+        'build_add': '',
+        'traction_kpi': '',
+        'hire': '',
+    })
+
+
 def _readiness_status(value: bool, partial: bool = False) -> str:
     if value:
         return 'match'
@@ -530,6 +596,87 @@ def _build_startup_roadmap(
             "Pause fundraising outreach until the Traction exit gate is hit — raise on proof, not slides.",
         ]
 
+    vertical = _vertical_playbook(market_type)
+    if vertical.get('validate_add'):
+        validate_tasks.append(vertical['validate_add'])
+    if vertical.get('build_add'):
+        build_tasks.append(vertical['build_add'])
+
+    validate_kpis = [
+        '5 design partners signed + willingness-to-pay in writing.',
+        'Top 3 pains ranked by budget + urgency (scorecard).',
+    ]
+    build_kpis = [
+        'Live MVP with ≥3 weekly-active design partners.',
+        'Onboarding drop-off <40% + event tracking live.',
+    ]
+    if enterprise_motion:
+        traction_kpis = [
+            '3-5 paid pilots with success criteria + conversion dates.',
+            'Pilot → paid conversion ≥20% + 1 case study.',
+        ]
+    else:
+        traction_kpis = [
+            'W4 retention ≥25% + activation ≥40%.',
+            'NPS ≥30 on core wedge + referral loop live.',
+        ]
+    if vertical.get('traction_kpi'):
+        traction_kpis.append(vertical['traction_kpi'])
+    raise_kpis = [
+        'Data room live: cohorts, pipeline, burn multiple, 18-mo plan.',
+        '2+ partners in diligence + 6-month pipeline.',
+    ] if score >= 70 else [
+        f"Runway extended to ≥6 mo (now ~{runway_months} mo).",
+        'Traction gate hit before priced raise.',
+    ]
+
+    # Hiring plan — role-level, stage-gated (additive, UI-optional).
+    hiring_plan: list[dict] = []
+    if team_size < 4:
+        hiring_plan.append({
+            'role': 'Product + GTM builder',
+            'when': 'Days 0-30',
+            'why': f"Team of {team_size} below 4-person minimum — target ~{team_target}.",
+        })
+    if junior_founder:
+        hiring_plan.append({
+            'role': 'Domain advisor / fractional operator',
+            'when': 'Days 0-30',
+            'why': 'Founder experience <3 yrs — weekly decision review.',
+        })
+    if vertical.get('hire'):
+        hiring_plan.append({'role': vertical['hire'].split(' by ')[0], 'when': 'Days 31-90', 'why': vertical['hire']})
+    if enterprise_motion:
+        hiring_plan.append({
+            'role': 'Founding sales / solutions (founder-led + 1 support)',
+            'when': 'Days 61-90',
+            'why': 'Enterprise pilots need buying-committee coverage.',
+        })
+    else:
+        hiring_plan.append({
+            'role': 'Growth + community loop owner',
+            'when': 'Days 61-90',
+            'why': 'Consumer traction needs retention + referral ownership.',
+        })
+    if score >= 70:
+        hiring_plan.append({
+            'role': 'Ops / finance discipline (part-time ok)',
+            'when': 'Days 91-180',
+            'why': 'Raise readiness needs burn-multiple + reporting rigor.',
+        })
+
+    monthly_burn = max(float(team_size) * 6000.0, 15000.0) if team_size > 0 else 15000.0
+    funding_plan = {
+        'monthly_burn': int(round(monthly_burn)),
+        'runway_months': runway_months,
+        'capital_target': capital_target,
+        'use_of_funds': [
+            f"Product + GTM hires (~60% of ${capital_target:,.0f}).",
+            'Traction experiments + pilots (~25%).',
+            'Ops buffer + compliance (~15%).',
+        ],
+    }
+
     phases = [
         {
             'phase': 'Validate',
@@ -537,6 +684,7 @@ def _build_startup_roadmap(
             'focus': f"Nail one ICP and one painful problem in {market_label}.",
             'tasks': validate_tasks,
             'exit_criteria': "5 design partners + willingness-to-pay evidence in writing.",
+            'kpis': validate_kpis,
         },
         {
             'phase': 'Build MVP',
@@ -544,6 +692,7 @@ def _build_startup_roadmap(
             'focus': "Ship the smallest lovable product with analytics from day one.",
             'tasks': build_tasks,
             'exit_criteria': "Live MVP with ≥3 active design partners using it weekly.",
+            'kpis': build_kpis,
         },
         {
             'phase': 'Traction',
@@ -551,6 +700,7 @@ def _build_startup_roadmap(
             'focus': "Prove repeatable demand, not vanity growth.",
             'tasks': traction_tasks,
             'exit_criteria': traction_exit,
+            'kpis': traction_kpis,
         },
         {
             'phase': 'Raise / Scale' if score >= 70 else 'Extend runway',
@@ -578,6 +728,9 @@ def _build_startup_roadmap(
         'runway_months': runway_months,
         'capital_target': capital_target,
         'team_target': team_target,
+        'vertical': {'type': (market_type or 'general'), 'label': vertical.get('label', 'General')},
+        'hiring_plan': hiring_plan[:5],
+        'funding_plan': funding_plan,
         'milestones_30_60_90': [
             'Day 30: 5 design partners + written willingness-to-pay.',
             'Day 60: live MVP with weekly active usage.',

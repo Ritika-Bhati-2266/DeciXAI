@@ -125,7 +125,38 @@ def generate_decision_report(domain: str, decision_data: dict) -> io.BytesIO:
         phases = startup_roadmap.get('phases') or []
         if phases:
             stage = startup_roadmap.get('stage', '')
-            elements.append(Paragraph(f"Startup Roadmap{f' — {stage}' if stage else ''}", heading_style))
+            vertical = startup_roadmap.get('vertical') or {}
+            vertical_label = vertical.get('label', '') if isinstance(vertical, dict) else ''
+            heading = f"Startup Roadmap{f' — {stage}' if stage else ''}{f' ({vertical_label})' if vertical_label else ''}"
+            elements.append(Paragraph(heading, heading_style))
+            funding_plan = startup_roadmap.get('funding_plan') or {}
+            if isinstance(funding_plan, dict) and funding_plan:
+                burn = funding_plan.get('monthly_burn', '')
+                runway = funding_plan.get('runway_months', '')
+                try:
+                    burn_txt = f"${int(burn):,}/mo" if burn != '' else 'N/A'
+                except Exception:
+                    burn_txt = str(burn)
+                elements.append(Paragraph(
+                    f"<b>Funding plan:</b> burn {burn_txt} | runway ~{runway} mo | "
+                    f"target ${int(startup_roadmap.get('capital_target') or funding_plan.get('capital_target') or 0):,}",
+                    normal_style))
+                elements.append(Spacer(1, 4))
+                for use in (funding_plan.get('use_of_funds') or [])[:3]:
+                    elements.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;• {use}", normal_style))
+                    elements.append(Spacer(1, 4))
+            hiring_plan = startup_roadmap.get('hiring_plan') or []
+            if hiring_plan:
+                elements.append(Paragraph("<b>Hiring plan:</b>", normal_style))
+                elements.append(Spacer(1, 4))
+                for hire in hiring_plan[:5]:
+                    if isinstance(hire, dict):
+                        elements.append(Paragraph(
+                            f"&nbsp;&nbsp;&nbsp;&nbsp;• {hire.get('role', '')} [{hire.get('when', '')}] — {hire.get('why', '')}",
+                            normal_style))
+                    else:
+                        elements.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;• {hire}", normal_style))
+                    elements.append(Spacer(1, 4))
             risk_flags = startup_roadmap.get('risk_flags') or []
             if risk_flags:
                 risk_style = ParagraphStyle(
@@ -156,7 +187,11 @@ def generate_decision_report(domain: str, decision_data: dict) -> io.BytesIO:
                 exit_gate = phase.get('exit_criteria', '')
                 if exit_gate:
                     elements.append(Paragraph(f"<i>Exit gate: {exit_gate}</i>", normal_style))
-                    elements.append(Spacer(1, 6))
+                    elements.append(Spacer(1, 4))
+                for kpi in (phase.get('kpis') or [])[:4]:
+                    elements.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;▸ KPI: {kpi}", normal_style))
+                    elements.append(Spacer(1, 4))
+                elements.append(Spacer(1, 2))
 
     doc.build(elements)
     buffer.seek(0)

@@ -28,16 +28,43 @@ function ReadinessBar({ label, info }) {
 
 export default function StartupRoadmapCard({ roadmap }) {
   const [expandedPhases, setExpandedPhases] = useState({})
+  const [copied, setCopied] = useState(false)
   if (!roadmap || typeof roadmap !== 'object') return null
   const phases = Array.isArray(roadmap.phases) ? roadmap.phases : []
   const gaps = Array.isArray(roadmap.gaps) ? roadmap.gaps : []
   const riskFlags = Array.isArray(roadmap.risk_flags) ? roadmap.risk_flags : []
   const milestones = Array.isArray(roadmap.milestones_30_60_90) ? roadmap.milestones_30_60_90 : []
   const readiness = roadmap.readiness || {}
+  const hiringPlan = Array.isArray(roadmap.hiring_plan) ? roadmap.hiring_plan : []
+  const fundingPlan = roadmap.funding_plan || null
+  const vertical = roadmap.vertical || null
   if (!phases.length) return null
 
   const togglePhase = (index) =>
     setExpandedPhases((prev) => ({ ...prev, [index]: !prev[index] }))
+
+  const handleCopy = async () => {
+    const lines = [
+      `Startup Roadmap — ${roadmap.stage || 'Execution plan'}${vertical?.label ? ` (${vertical.label})` : ''}`,
+      fundingPlan ? `Runway ~${fundingPlan.runway_months} mo | Burn $${Number(fundingPlan.monthly_burn || 0).toLocaleString()}/mo | Target $${Number(roadmap.capital_target || 0).toLocaleString()}` : '',
+      '',
+      ...phases.flatMap((p, i) => [
+        `${i + 1}. ${p.phase} (${p.timeline}) — ${p.focus}`,
+        ...(Array.isArray(p.tasks) ? p.tasks.map((t) => `   • ${t}`) : []),
+        ...(Array.isArray(p.kpis) && p.kpis.length ? [`   KPIs: ${p.kpis.join(' | ')}`] : []),
+        `   Exit: ${p.exit_criteria || ''}`,
+        '',
+      ]),
+      hiringPlan.length ? `Hiring: ${hiringPlan.map((h) => `${h.role} [${h.when}]`).join('; ')}` : '',
+    ].filter(Boolean).join('\n')
+    try {
+      await navigator.clipboard.writeText(lines)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   return (
     <div className="rounded-xl border border-fuchsia-200/60 bg-white p-4 shadow-sm col-span-1 lg:col-span-3">
@@ -45,11 +72,52 @@ export default function StartupRoadmapCard({ roadmap }) {
         <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-fuchsia-500" />
           Startup Roadmap — {roadmap.stage || 'Execution plan'}
+          {vertical?.label && (
+            <span className="ml-1 rounded-full bg-fuchsia-50 border border-fuchsia-200 px-2 py-0.5 text-[11px] font-bold text-fuchsia-700">
+              {vertical.label}
+            </span>
+          )}
         </h3>
-        <span className="text-[12px] text-slate-400 font-bold uppercase tracking-wider">
-          {roadmap.runway_months != null ? `~${roadmap.runway_months} mo runway` : 'Phased plan'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-slate-400 font-bold uppercase tracking-wider">
+            {roadmap.runway_months != null ? `~${roadmap.runway_months} mo runway` : 'Phased plan'}
+          </span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600 hover:border-fuchsia-300 hover:text-fuchsia-700 transition cursor-pointer"
+          >
+            {copied ? 'Copied ✓' : 'Copy plan'}
+          </button>
+        </div>
       </div>
+
+      {fundingPlan && (
+        <div className="mb-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-2 text-[12px]">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Monthly burn</span>
+            <span className="text-[14px] font-black text-slate-800">${Number(fundingPlan.monthly_burn || 0).toLocaleString()}/mo</span>
+          </div>
+          <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-2 text-[12px]">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Capital target</span>
+            <span className="text-[14px] font-black text-slate-800">${Number(roadmap.capital_target || fundingPlan.capital_target || 0).toLocaleString()}</span>
+          </div>
+          <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-2 text-[12px]">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Use of funds</span>
+            <span className="text-[12px] font-bold text-slate-600">60% hires / 25% traction / 15% buffer</span>
+          </div>
+        </div>
+      )}
+
+      {hiringPlan.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {hiringPlan.map((h, i) => (
+            <span key={i} title={h.why || ''} className="rounded-full bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-[12px] font-bold text-indigo-800">
+              👥 {typeof h === 'string' ? h : `${h.role} · ${h.when || ''}`}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
         <ReadinessBar label="Capital" info={readiness.capital} />
@@ -115,6 +183,14 @@ export default function StartupRoadmapCard({ roadmap }) {
               <div className="mt-2.5 rounded-lg bg-emerald-50/70 border border-emerald-100 p-2 text-[12px] text-emerald-900 leading-snug">
                 <span className="font-black uppercase tracking-wider text-[10px] text-emerald-600 block">Exit gate</span>
                 {phase.exit_criteria}
+              </div>
+            )}
+            {Array.isArray(phase.kpis) && phase.kpis.length > 0 && (
+              <div className="mt-2 rounded-lg bg-sky-50/70 border border-sky-100 p-2 text-[12px] text-sky-900 leading-snug">
+                <span className="font-black uppercase tracking-wider text-[10px] text-sky-600 block">KPIs to hit</span>
+                {phase.kpis.map((kpi, kIdx) => (
+                  <div key={kIdx}>▸ {kpi}</div>
+                ))}
               </div>
             )}
           </div>
