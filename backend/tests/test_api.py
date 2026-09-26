@@ -247,3 +247,49 @@ def test_startup_input_bounds():
         raise AssertionError(f"should have rejected {bad}")
 
 
+def test_finance_input_bounds():
+    """Absurd values must be rejected at the schema layer."""
+    from pydantic import ValidationError
+
+    from models.schemas import FinanceInput
+
+    FinanceInput(income=75000, loan=18000, credit_score=710)
+    # Exact boundary values must remain valid.
+    FinanceInput(income=100_000_000_000.0, loan=100_000_000_000.0, credit_score=850.0)
+    for bad in [
+        {"income": 1e15, "loan": 18000, "credit_score": 710},
+        {"income": 75000, "loan": 100_000_000_000.0 + 1, "credit_score": 710},
+        {"income": 0, "loan": 18000, "credit_score": 710},
+        {"income": 75000, "loan": -1, "credit_score": 710},
+        {"income": 75000, "loan": 18000, "credit_score": 900},
+    ]:
+        try:
+            FinanceInput(**bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"should have rejected {bad}")
+
+
+def test_policy_input_bounds():
+    """Absurd values must be rejected at the schema layer."""
+    from pydantic import ValidationError
+
+    from models.schemas import PolicyInput
+
+    PolicyInput(sector="education", budget=5000000, population=1200000)
+    # Exact boundary values must remain valid.
+    PolicyInput(sector="x", budget=1_000_000_000_000.0, population=10_000_000_000.0)
+    for bad in [
+        {"sector": "education", "budget": 1e18, "population": 1200000},
+        {"sector": "education", "budget": 5000000, "population": 1e15},
+        {"sector": "", "budget": 5000000, "population": 1200000},
+        {"sector": "education", "budget": -1, "population": 1200000},
+        {"sector": "education", "budget": 5000000, "population": -5},
+    ]:
+        try:
+            PolicyInput(**bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"should have rejected {bad}")
+
+
