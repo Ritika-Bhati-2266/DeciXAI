@@ -293,3 +293,43 @@ def test_policy_input_bounds():
         raise AssertionError(f"should have rejected {bad}")
 
 
+def test_normalize_market_segments():
+    """Market text must map to the right segment/type (drives roadmap branching)."""
+    from services.startup_service import _normalize_market
+
+    assert _normalize_market("B2B SaaS") == {
+        "market": "enterprise",
+        "market_type": "saas",
+        "market_segment": "enterprise",
+    }
+    assert _normalize_market("D2C fintech")["market_segment"] == "consumer"
+    assert _normalize_market("D2C fintech")["market_type"] == "fintech"
+    assert _normalize_market("Enterprise")["market_segment"] == "enterprise"
+    assert _normalize_market("consumer")["market_segment"] == "consumer"
+    assert _normalize_market("") == {
+        "market": "",
+        "market_type": "general",
+        "market_segment": "general",
+    }
+
+
+def test_startup_traction_branch_enterprise_vs_consumer():
+    """Traction phase must differ by segment: pilots for enterprise, retention for consumer."""
+    from services.startup_service import _build_startup_roadmap
+
+    enterprise = _build_startup_roadmap(
+        500000, 6, "enterprise", 6, 80.0, market_type="saas", market_segment="enterprise"
+    )
+    consumer = _build_startup_roadmap(
+        500000, 6, "consumer", 6, 80.0, market_type="general", market_segment="consumer"
+    )
+    ent_traction = enterprise["phases"][2]
+    con_traction = consumer["phases"][2]
+    assert ent_traction["phase"] == con_traction["phase"] == "Traction"
+    assert "pilot" in ent_traction["exit_criteria"].lower()
+    assert "retention" in con_traction["exit_criteria"].lower()
+    assert ent_traction["exit_criteria"] != con_traction["exit_criteria"]
+    assert "paid pilots" in ent_traction["tasks"][0].lower()
+    assert "repeat usage" in con_traction["tasks"][0].lower()
+
+
