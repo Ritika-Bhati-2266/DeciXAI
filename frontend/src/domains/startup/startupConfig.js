@@ -10,7 +10,7 @@ export const STARTUP_CONFIG = {
     'Pre-seed stage, raised 150000, 3 engineers, market HealthTech AI, founder experience 3 years',
   ],
   fields: [
-    { name: 'funding', label: 'Funding Capital ($)', type: 'number', min: 0, required: true },
+    { name: 'funding', label: 'Funding Capital (full amount in ₹/$)', type: 'number', min: 0, required: true },
     { name: 'team_size', label: 'Team Size (Headcount)', type: 'number', min: 1, required: true },
     { name: 'market', label: 'Target Market / Vertical', type: 'text', required: true },
     { name: 'experience', label: 'Founder Experience (Years)', type: 'number', min: 0, required: true },
@@ -64,11 +64,22 @@ export const STARTUP_PRESETS = [
   },
 ]
 
+const UNIT_MULTIPLIERS = {
+  k: 1000,
+  m: 1000000, mn: 1000000, million: 1000000, millions: 1000000,
+  b: 1000000000, billion: 1000000000, billions: 1000000000,
+  l: 100000, lac: 100000, lacs: 100000, lakh: 100000, lakhs: 100000,
+  cr: 10000000, crore: 10000000, crores: 10000000,
+}
+
 const extractNumber = (text, keys) => {
   const lower = text.toLowerCase()
   for (const key of keys) {
-    const match = lower.match(new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b\\D*([0-9]+(?:\\.[0-9]+)?)`, 'i'))
-    if (match) return Number(match[1])
+    const match = lower.match(new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b\\D*([0-9]+(?:\\.[0-9]+)?)\\s*(k|m|mn|b|l|lac|lacs|lakh|lakhs|cr|crore|crores|million|millions|billion|billions)?\\b`, 'i'))
+    if (match) {
+      const multiplier = UNIT_MULTIPLIERS[(match[2] || '').toLowerCase()] || 1
+      return Number(match[1]) * multiplier
+    }
   }
   return null
 }

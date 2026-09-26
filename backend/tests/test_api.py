@@ -115,3 +115,135 @@ def test_resume_upload_pdf():
     assert "decision" in data["decision"]
 
 
+def _startup_roadmap_of(result):
+    """Helper: extract the deterministic startup roadmap from a decision payload."""
+    details = result.get("details") or {}
+    roadmap = details.get("startup_roadmap") or {}
+    assert isinstance(roadmap, dict), "startup_roadmap missing from response details"
+    return roadmap
+
+
+def test_startup_roadmap_investor_ready():
+    """High-score venture should reach Investor-ready/Seed-ready with a full 4-phase roadmap."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 500000,
+        "team_size": 6,
+        "market": "B2B SaaS",
+        "experience": 6,
+    })
+    roadmap = _startup_roadmap_of(result)
+    assert roadmap.get("stage") in ("Investor-ready", "Seed-ready")
+    assert len(roadmap.get("phases") or []) == 4
+    for phase in roadmap["phases"]:
+        assert phase.get("phase") and phase.get("timeline")
+        assert len(phase.get("tasks") or []) >= 3
+        assert phase.get("exit_criteria")
+    assert "risk_flags" in roadmap and isinstance(roadmap["risk_flags"], list)
+    # Well-funded team should have no critical blockers
+    assert roadmap["risk_flags"] == []
+
+
+def test_startup_roadmap_idea_validation():
+    """Low-score venture should land in Idea-validation/Pre-seed with critical blockers flagged."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 25000,
+        "team_size": 2,
+        "market": "Consumer Productivity",
+        "experience": 1,
+    })
+    roadmap = _startup_roadmap_of(result)
+    assert roadmap.get("stage") in ("Idea-validation", "Pre-seed")
+    assert len(roadmap.get("phases") or []) == 4
+    assert len(roadmap.get("risk_flags") or []) >= 2
+    blob = " ".join(roadmap["risk_flags"]).lower()
+    assert "runway" in blob or "capital" in blob
+    # Last phase should be runway-extension, not a fundraise push
+    assert roadmap["phases"][-1]["phase"] == "Extend runway"
+
+
+def test_startup_roadmap_zero_inputs_no_crash():
+    """Edge case: funding=0 / team_size=0 must not crash and must flag critical risk."""
+    from services.startup_service import _build_startup_roadmap
+
+    roadmap = _build_startup_roadmap(0, 0, "", 0, 10.0, market_type="general", market_segment="")
+    assert roadmap.get("stage") == "Idea-validation"
+    assert len(roadmap.get("phases") or []) == 4
+    assert len(roadmap.get("risk_flags") or []) >= 2
+    assert roadmap.get("runway_months") == 0.0
+
+
+def test_roadmap_unicode_print_safe():
+    """Roadmap text contains non-cp1252 symbols (>=, em-dash); printing/logging must not crash on Windows."""
+    import io
+    import json
+    import sys
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 25000,
+        "team_size": 2,
+        "market": "Consumer Productivity",
+        "experience": 1,
+    })
+    payload = json.dumps(result, ensure_ascii=False)
+    assert any(sym in payload for sym in (">=", "\u2014", "\u2192")) or "CRITICAL" in payload
+
+    # Simulate a cp1252-limited terminal: writing symbols must raise there,
+    # proving the test exercises the real encoding path...
+    strict_buf = io.BytesIO()
+    strict_stream = io.TextIOWrapper(strict_buf, encoding="cp1252", errors="strict")
+    try:
+        with strict_stream:
+            strict_stream.write("exit gate \u2265 test")
+        raised = False
+    except UnicodeEncodeError:
+        raised = True
+    assert raised, "sanity check: cp1252 stream should reject the roadmap symbol"
+
+    # ...while the app-configured stdout must accept it without raising.
+    print(payload[:1000])
+    if sys.platform == "win32":
+        encoding = (sys.stdout.encoding or "").lower().replace("-", "")
+        assert encoding == "utf8", f"stdout not UTF-8 on Windows: {sys.stdout.encoding}"
+
+    # PDF pipeline must also digest the same symbols without error.
+    from services.pdf_service import generate_decision_report
+    buf = generate_decision_report("startup", result)
+    assert len(buf.getvalue()) > 0
+
+
+def test_startup_parse_lakh_crore():
+    """Free-text funding in Indian units must parse to full amounts (no NaN)."""
+    from services.startup_service import parse_startup_input
+
+    assert parse_startup_input("funding 20 lakh, team 4, experience 2 years")["funding"] == 2_000_000.0
+    assert parse_startup_input("raised 2.5 crore, team 6, experience 5 years")["funding"] == 25_000_000.0
+    assert parse_startup_input("funding 50L, team 5, experience 3 years")["funding"] == 5_000_000.0
+
+
+def test_startup_input_bounds():
+    """Absurd values must be rejected at the schema layer."""
+    from pydantic import ValidationError
+
+    from models.schemas import StartupInput
+
+    StartupInput(funding=300000, team_size=5, market="B2B SaaS", experience=4)
+    # Exact boundary values must remain valid.
+    StartupInput(funding=100_000_000_000.0, team_size=10_000, market="x", experience=60.0)
+    for bad in [
+        {"funding": 1e15, "team_size": 5, "market": "x", "experience": 4},
+        {"funding": 100_000_000_000.0 + 1, "team_size": 5, "market": "x", "experience": 4},
+        {"funding": 100, "team_size": 0, "market": "x", "experience": 4},
+        {"funding": 100, "team_size": 5, "market": "", "experience": 4},
+    ]:
+        try:
+            StartupInput(**bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"should have rejected {bad}")
+
+

@@ -28,9 +28,9 @@ class FinanceInput(BaseModel):
 
 
 class StartupInput(BaseModel):
-    funding: float = Field(..., ge=0.0, description="Funding amount cannot be negative")
-    team_size: int = Field(..., ge=1, description="Team size must be at least 1")
-    market: str
+    funding: float = Field(..., ge=0.0, le=100_000_000_000.0, description="Funding amount, bounded up to 100B to keep runway math sane")
+    team_size: int = Field(..., ge=1, le=10_000, description="Team size must be between 1 and 10000")
+    market: str = Field(..., min_length=1, description="Target market / vertical, non-empty")
     experience: float = Field(..., ge=0.0, le=60.0, description="Founder years of experience, bounded up to 60")
 
 

@@ -46,7 +46,7 @@ export default function StartupForm({
         {/* Funding */}
         <div className="rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
           <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 block mb-1">
-            Capital Raised / Funding ($) <span className="text-rose-500">*</span>
+            Capital Raised / Funding (full amount in ₹/$) <span className="text-rose-500">*</span>
           </label>
           <input
             type="number"
@@ -54,7 +54,7 @@ export default function StartupForm({
             step="10000"
             value={input.funding ?? ''}
             onChange={(e) => handleNumericChange('funding', e.target.value)}
-            placeholder="e.g. 250000"
+            placeholder="e.g. 2000000 (20 lakh)"
             className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
           />
           {fieldErrors.funding && (
