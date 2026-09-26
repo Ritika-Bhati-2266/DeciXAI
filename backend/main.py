@@ -8,7 +8,21 @@ Action Plans across career, finance, startup, and policy domains.
 from __future__ import annotations
 
 import os
+import sys
 import time
+
+# Windows consoles default to cp1252, which crashes on roadmap/XAI symbols
+# (>=, em-dashes, emoji). Force UTF-8 so logging/printing never raises
+# UnicodeEncodeError regardless of terminal code page.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
