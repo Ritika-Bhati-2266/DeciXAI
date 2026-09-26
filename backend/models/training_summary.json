@@ -2,12 +2,18 @@
   "career": {
     "model": "xgboost",
     "accuracy": 0.7404,
-    "f1": 0.6566,
-    "roc_auc": 0.8427
+    "f1": 0.657,
+    "roc_auc": 0.8421
   },
   "career_path": {
-    "accuracy": 0.9404,
-    "f1_macro": 0.8601
+    "accuracy": 0.9543,
+    "f1_macro": 0.8903
+  },
+  "finance": {
+    "model": "xgboost",
+    "accuracy": 0.9188,
+    "f1": 0.9226,
+    "roc_auc": 0.968
   },
   "startup": {
     "model": "xgboost",
