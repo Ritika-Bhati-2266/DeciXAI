@@ -1,3 +1,5 @@
+import StartupRoadmapCard from './StartupRoadmapCard'
+
 const clampPercent = (value) => Math.max(0, Math.min(100, Math.round((value || 0) * 100)))
 
 const normalizeOptions = (payload) => {
@@ -500,6 +502,7 @@ export default function DecisionReport({ payload, interactiveFields, onInteracti
   const realityCheck = payload.reality_check || ''
   const projectIdeas = payload.project_ideas || []
   const careerIntel = normalizeCareerIntel(payload)
+  const startupRoadmap = payload?.details?.startup_roadmap || null
   const bestPercent = typeof payload.score === 'number'
     ? Math.round(payload.score)
     : (options[0]?.percent || 0)
@@ -776,6 +779,11 @@ export default function DecisionReport({ payload, interactiveFields, onInteracti
               </div>
             )}
           </div>
+        )}
+
+        {/* Startup phased execution roadmap */}
+        {startupRoadmap?.phases && (
+          <StartupRoadmapCard roadmap={startupRoadmap} />
         )}
       </div>
     </div>

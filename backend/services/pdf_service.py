@@ -118,6 +118,46 @@ def generate_decision_report(domain: str, decision_data: dict) -> io.BytesIO:
         elements.append(Paragraph("Detailed Context", heading_style))
         elements.append(Paragraph(explanation, normal_style))
 
+    # Startup phased roadmap (deterministic, mirrors career roadmap in UI)
+    details = decision_data.get('details') or {}
+    startup_roadmap = details.get('startup_roadmap') or decision_data.get('startup_roadmap')
+    if isinstance(startup_roadmap, dict):
+        phases = startup_roadmap.get('phases') or []
+        if phases:
+            stage = startup_roadmap.get('stage', '')
+            elements.append(Paragraph(f"Startup Roadmap{f' — {stage}' if stage else ''}", heading_style))
+            risk_flags = startup_roadmap.get('risk_flags') or []
+            if risk_flags:
+                risk_style = ParagraphStyle(
+                    'RiskFlagStyle',
+                    parent=normal_style,
+                    textColor=colors.HexColor("#b91c1c"),
+                    fontName='Helvetica-Bold',
+                    backColor=colors.HexColor("#fef2f2"),
+                    borderPadding=(6, 6, 6),
+                )
+                elements.append(Paragraph("CRITICAL BLOCKERS — fix before scaling:", heading_style))
+                for flag in risk_flags[:5]:
+                    elements.append(Paragraph(f"⛔ {flag}", risk_style))
+                    elements.append(Spacer(1, 6))
+            gaps = startup_roadmap.get('gaps') or []
+            for gap in gaps[:4]:
+                elements.append(Paragraph(f"• Gap: {gap}", normal_style))
+                elements.append(Spacer(1, 6))
+            for phase in phases:
+                name = phase.get('phase', 'Phase')
+                timeline = phase.get('timeline', '')
+                focus = phase.get('focus', '')
+                elements.append(Paragraph(f"<b>{name} ({timeline})</b> — {focus}", normal_style))
+                elements.append(Spacer(1, 4))
+                for task in (phase.get('tasks') or [])[:5]:
+                    elements.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;• {task}", normal_style))
+                    elements.append(Spacer(1, 4))
+                exit_gate = phase.get('exit_criteria', '')
+                if exit_gate:
+                    elements.append(Paragraph(f"<i>Exit gate: {exit_gate}</i>", normal_style))
+                    elements.append(Spacer(1, 6))
+
     doc.build(elements)
     buffer.seek(0)
     return buffer

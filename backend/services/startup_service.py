@@ -137,6 +137,10 @@ def _parse_number_with_suffix(number_text: str, suffix_text: str = '') -> float:
         value *= 1_000_000_000
     elif suffix in {'million', 'millions'}:
         value *= 1_000_000
+    elif suffix in {'l', 'lac', 'lacs', 'lakh', 'lakhs'}:
+        value *= 100_000
+    elif suffix in {'cr', 'crore', 'crores'}:
+        value *= 10_000_000
 
     return value
 
@@ -162,8 +166,8 @@ def parse_startup_input(text: str) -> dict:
     funding_match = _closest_contextual_match(
         message,
         [
-            r'\b(?:funding|raised|capital|investment)\b[^\d]{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|m|mn|b|million|millions)?\b',
-            r'([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|m|mn|b|million|millions)?\b[^\w]{0,10}\b(?:in funding|raised|capital|investment)\b',
+            r'\b(?:funding|raised|capital|investment)\b[^\d]{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|m|mn|b|l|lac|lacs|lakh|lakhs|cr|crore|crores|million|millions)?\b',
+            r'([0-9][0-9,]*(?:\.[0-9]+)?)\s*(k|m|mn|b|l|lac|lacs|lakh|lakhs|cr|crore|crores|million|millions)?\b[^\w]{0,10}\b(?:in funding|raised|capital|investment)\b',
         ],
     )
     team_match = _closest_contextual_match(
@@ -362,6 +366,224 @@ def _bounded_team_target(current: float, target: float) -> float:
     if current == current:
         bounded = max(bounded, min(max(float(current), 4.0), 12.0))
     return bounded
+
+
+def _startup_stage(score: float) -> str:
+    if score >= 85:
+        return 'Investor-ready'
+    if score >= 70:
+        return 'Seed-ready'
+    if score >= 50:
+        return 'Pre-seed'
+    return 'Idea-validation'
+
+
+def _readiness_status(value: bool, partial: bool = False) -> str:
+    if value:
+        return 'match'
+    if partial:
+        return 'partial'
+    return 'mismatch'
+
+
+def _build_startup_roadmap(
+    funding: float,
+    team_size: int,
+    market: str,
+    experience: float,
+    score: float,
+    market_type: str = '',
+    market_segment: str = '',
+) -> dict:
+    """Deterministic phased execution roadmap for the startup domain.
+
+    Mirrors the career domain's `career_intelligence` payload so the
+    frontend can render a rich roadmap without depending on the LLM.
+    Phases are always Validate -> Build -> Traction -> Raise/Scale,
+    with tasks tailored to capital / team / experience gaps.
+    """
+    stage = _startup_stage(score)
+    monthly_burn = max(float(team_size) * 6000.0, 15000.0) if team_size > 0 else 15000.0
+    runway_months = round(float(funding) / monthly_burn, 1) if funding > 0 else 0.0
+    capital_target = _round_currency(max(float(funding) * 1.8, 200000.0))
+    team_target = int(min(12, max(4, team_size + 1 if team_size < 4 else team_size)))
+
+    market_label = (market or market_type or market_segment or 'your market').strip() or 'your market'
+    enterprise_motion = (market_segment or market or '').lower() in {'enterprise'} or 'b2b' in str(market).lower()
+
+    readiness = {
+        'capital': {
+            'status': _readiness_status(funding >= 200000, partial=funding >= 100000),
+            'label': f"${funding:,.0f} capital / ~{runway_months} mo runway",
+        },
+        'team': {
+            'status': _readiness_status(4 <= team_size <= 10, partial=(team_size == 3 or 11 <= team_size <= 12)),
+            'label': f"Team of {team_size} ({'healthy' if 4 <= team_size <= 10 else 'needs shaping'})",
+        },
+        'experience': {
+            'status': _readiness_status(experience >= 5, partial=experience >= 3),
+            'label': f"{experience:.1f} yrs founder experience",
+        },
+        'market': {
+            'status': _readiness_status(bool((market_segment or '') in {'enterprise', 'consumer'}),
+                                        partial=bool(market_type and market_type != 'general')),
+            'label': f"{market_label.title()} positioning",
+        },
+    }
+
+    gaps: list[str] = []
+    if funding < 100000:
+        gaps.append(f"Runway is thin (~{runway_months} mo) — target ~${capital_target:,.0f} for 12-18 months of execution.")
+    if team_size < 4:
+        gaps.append(f"Team of {team_size} is below the 4-person execution minimum — hire toward ~{team_target} (product + GTM).")
+    elif team_size > 10:
+        gaps.append("Team is large for this stage — freeze hiring until ownership and traction milestones are clear.")
+    if experience < 3:
+        gaps.append("Founder experience < 3 yrs — add an operator/advisor and a weekly decision cadence.")
+    if not (market_segment or '') in {'enterprise', 'consumer'} and (not market_type or market_type == 'general'):
+        gaps.append("Market wedge is vague — narrow to one ICP and one repeatable use case.")
+    if not gaps:
+        gaps.append("Foundations are solid — the unlock is traction proof (pilots, retention, revenue).")
+
+    # Critical blockers, kept separate from advisory `gaps` so the UI/PDF
+    # can surface them prominently (red/bold).
+    risk_flags: list[str] = []
+    if funding <= 0:
+        risk_flags.append("CRITICAL: No capital recorded — execution cannot start without bridge funding or revenue.")
+    elif runway_months < 2:
+        risk_flags.append(f"CRITICAL: Runway under 2 months (~{runway_months} mo) — cut burn or bridge immediately.")
+    if team_size <= 2:
+        risk_flags.append("CRITICAL: Founding team of 2 or fewer — no redundancy; add a technical co-founder or core builder.")
+    if experience < 2:
+        risk_flags.append("CRITICAL: Founder experience under 2 yrs — execution risk is high without an operator/advisor.")
+    if not (market_segment or '') in {'enterprise', 'consumer'} and (not market_type or market_type == 'general'):
+        risk_flags.append("CRITICAL: No clear market wedge — validation will stall without one ICP and use case.")
+
+    thin_runway = funding < 100000
+    small_team = team_size < 4
+    junior_founder = experience < 3
+
+    validate_tasks = [
+        f"Interview 20 {market_label} buyers/users; score pain, budget, and urgency (close 5 design partners).",
+        "Prototype the core workflow (concierge or clickable demo) and get 5 recorded feedback sessions.",
+        "Write a one-page thesis: ICP, problem, willingness-to-pay, and why now.",
+    ]
+    if thin_runway:
+        validate_tasks.append("Cap validation spend: time-box discovery to 2 weeks and use no-code/concierge tests only.")
+    else:
+        validate_tasks.append("Pre-sell 2 LOIs or paid pilots during discovery to de-risk the build phase.")
+    if junior_founder:
+        validate_tasks.append("Recruit 1 domain advisor this month; review every major decision with them weekly.")
+    else:
+        validate_tasks.append("Document your unfair advantage (distribution, domain, prior wins) into the pitch narrative.")
+
+    build_tasks = [
+        (
+            "Freeze scope to 3 core jobs-to-be-done; ship behind feature flags with weekly demos."
+            if team_size >= 4 else
+            f"Expand to ~{team_target} (product + GTM) before committing to a 30-day build sprint."
+        ),
+        "Add auth, billing rails, event tracking, and a feedback widget before launch.",
+        "Dogfood with design partners; fix onboarding drop-off above 40%.",
+    ]
+    if small_team:
+        build_tasks.append("Keep the stack boring (proven tools) — no microservices or infra rewrites at this stage.")
+    else:
+        build_tasks.append("Assign clear DRI per workstream (product, GTM, ops) to avoid coordination drag.")
+    build_tasks.append("Run a weekly demo day with design partners; ship fixes within 48 hours of feedback.")
+
+    if enterprise_motion:
+        traction_tasks = [
+            f"Close 3-5 paid pilots in {market_label} with written success criteria and conversion dates.",
+            "Ship a security/compliance one-pager (data handling, access control) to unblock procurement.",
+            "Instrument activation → pilot → paid conversion funnel and review it weekly.",
+            "Turn the first win into a case study + reference call within 14 days of go-live.",
+            "Map the buying committee (champion, economic buyer, security) for every open pilot.",
+        ]
+        traction_exit = "3+ pilots with ≥1 conversion to paid + repeatable sales script."
+    else:
+        traction_tasks = [
+            f"Drive 4 weeks of repeat usage in {market_label} — cohort retention is the gate, not signups.",
+            "Run 15 customer interviews; ship the top 3 friction fixes within the sprint.",
+            "Stand up a referral loop (share/invite) and measure K-factor weekly.",
+            "Publish 2 build-in-public / teardown posts per week in the community where your ICP lives.",
+            "A/B test onboarding (1 variable at a time) until activation crosses 40%.",
+        ]
+        traction_exit = "W4 retention ≥25% + NPS ≥30 on the core wedge."
+
+    if score >= 70:
+        raise_tasks = [
+            "Build a data room: metrics, cohort charts, pipeline, burn multiple, and 18-month plan.",
+            "Open 30 investor/advisor conversations with a tight 10-slide narrative.",
+            "Set a weekly operating cadence: metrics review, top 3 bets, and kill list."
+            + (" Add an experienced operator/advisor to de-risk execution." if experience < 5 else ""),
+            "Secure 2 warm intros per week via design partners and advisors — no cold spray.",
+            "Define the round terms (target, minimum, use of funds) before the first partner meeting.",
+        ]
+    else:
+        raise_tasks = [
+            "Cut burn to extend runway 3+ months; tie every hire to a traction metric.",
+            "Line up bridge options (revenue, angels, grants) tied to hitting the Traction exit criteria.",
+            "Set a weekly operating cadence: metrics review, top 3 bets, and kill list."
+            + (" Add an experienced operator/advisor to de-risk execution." if experience < 5 else ""),
+            "Sell services / annual prepay to 2 design partners to fund the next build cycle.",
+            "Pause fundraising outreach until the Traction exit gate is hit — raise on proof, not slides.",
+        ]
+
+    phases = [
+        {
+            'phase': 'Validate',
+            'timeline': 'Days 0-30',
+            'focus': f"Nail one ICP and one painful problem in {market_label}.",
+            'tasks': validate_tasks,
+            'exit_criteria': "5 design partners + willingness-to-pay evidence in writing.",
+        },
+        {
+            'phase': 'Build MVP',
+            'timeline': 'Days 31-60',
+            'focus': "Ship the smallest lovable product with analytics from day one.",
+            'tasks': build_tasks,
+            'exit_criteria': "Live MVP with ≥3 active design partners using it weekly.",
+        },
+        {
+            'phase': 'Traction',
+            'timeline': 'Days 61-90',
+            'focus': "Prove repeatable demand, not vanity growth.",
+            'tasks': traction_tasks,
+            'exit_criteria': traction_exit,
+        },
+        {
+            'phase': 'Raise / Scale' if score >= 70 else 'Extend runway',
+            'timeline': 'Days 91-180',
+            'focus': (
+                f"Raise ~${capital_target:,.0f} on traction proof; scale what repeats."
+                if score >= 70 else
+                f"Extend runway (~{runway_months} mo left) while hitting traction gates before raising."
+            ),
+            'tasks': raise_tasks,
+            'exit_criteria': (
+                "Term sheet path: 2+ partners in diligence + 6-month pipeline."
+                if score >= 70 else
+                "Traction gate hit + 12-month runway plan before a priced raise."
+            ),
+        },
+    ]
+
+    return {
+        'stage': stage,
+        'readiness': readiness,
+        'gaps': _dedupe_texts(gaps, limit=4),
+        'risk_flags': _dedupe_texts(risk_flags, limit=5),
+        'phases': phases,
+        'runway_months': runway_months,
+        'capital_target': capital_target,
+        'team_target': team_target,
+        'milestones_30_60_90': [
+            'Day 30: 5 design partners + written willingness-to-pay.',
+            'Day 60: live MVP with weekly active usage.',
+            f"Day 90: {traction_exit}",
+        ],
+    }
 
 
 def _build_startup_response(score: float, funding: float, team_size: int, market: str, experience: float, market_segment: str | None = None) -> dict:
@@ -576,6 +798,26 @@ def get_startup_decision(data: dict | None):
         'mode': 'single',
         'parsed_input': _sanitize_startup_payload(startup),
     }
+
+    try:
+        roadmap = _build_startup_roadmap(
+            float(funding),
+            int(round(float(team_size))),
+            str(market or ''),
+            float(experience),
+            float(merged.get('score', 0.0) or 0.0),
+            market_type=str(market_type or ''),
+            market_segment=str(market_segment or ''),
+        )
+        merged['details'] = dict((merged.get('details') or {}))
+        merged['details']['startup_roadmap'] = roadmap
+        merged['followup_questions'] = [
+            'Who is the single ICP for the next 30 days (title + segment)?',
+            'Which 3 design partners will use the MVP weekly?',
+            f"What traction gate unlocks the next ${roadmap.get('capital_target', 200000):,.0f} raise?",
+        ]
+    except Exception:
+        pass
 
     llm_plan = generate_action_plan(
         domain="startup",
