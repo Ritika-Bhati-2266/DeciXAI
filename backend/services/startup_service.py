@@ -471,11 +471,22 @@ def _bounded_team_target(current: float, target: float) -> float:
 
 
 def _startup_stage(score: float) -> str:
-    if score >= 85:
+    """Stage bands matched to the calibrated score scale (Sep 2026).
+
+    Old bands (85/70/50) were built for the inflated model where only huge
+    later-stage companies scored high, so every calibrated early-stage
+    founder (typical range 27-47) landed in 'Idea-validation'.
+    New bands are anchored to empirical outcomes:
+      ~28.8 weak pre-seed (25k/2/1)      -> Idea-validation
+      ~35.6 strong seed (500k/6/6)        -> Pre-seed
+      ~47.4 well-funded (2M/6/6)          -> Seed-ready
+      60+ (big raw model scores, traction) -> Investor-ready
+    """
+    if score >= 60:
         return 'Investor-ready'
-    if score >= 70:
+    if score >= 40:
         return 'Seed-ready'
-    if score >= 50:
+    if score >= 32:
         return 'Pre-seed'
     return 'Idea-validation'
 
