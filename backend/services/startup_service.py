@@ -1175,6 +1175,19 @@ def get_startup_decision(data: dict | None):
             # Readiness panel (e.g. team of 5 is healthy, not a hiring problem).
             if not _roadmap_gap_exists(feature, funding_usd, team_size, experience):
                 continue
+            if feature == 'team_size':
+                try:
+                    current_team = float(team_size)
+                except Exception:
+                    current_team = float('nan')
+                if current_team == current_team and current_team > _ROADMAP_HEALTHY_TEAM_MAX:
+                    # Overstaffed: the gap is too many people, not too few —
+                    # profile "targets" point the wrong way here, so handle
+                    # this direction explicitly (matches the roadmap gap text).
+                    action_plan.append(
+                        f'Team of {int(round(current_team))} is oversized for this stage — freeze hiring and clarify ownership before adding headcount.'
+                    )
+                    continue
             profile = numeric_profiles.get(feature, {})
             target = profile.get('positive_p25') or profile.get('positive_median')
             if target is None:

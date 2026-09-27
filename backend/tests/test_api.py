@@ -238,6 +238,30 @@ def test_startup_blocking_matches_readiness():
     assert readiness.get("team", {}).get("status") == "match"
 
 
+def test_startup_overstaffed_team_action():
+    """Overstaffed team (54 > healthy max 10) must get freeze-hiring action.
+
+    Regression: gap was detected but the action logic only handled the
+    'too small, grow' direction, so it fell through to the 'healthy bands'
+    fallback — contradicting Readiness (GAP) and Blocking Factors.
+    """
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 49100000,
+        "team_size": 54,
+        "market": "B2B SaaS",
+        "experience": 4,
+    })
+    readiness = (result.get("details") or {}).get("startup_roadmap", {}).get("readiness", {})
+    assert readiness.get("team", {}).get("status") == "mismatch"
+    next_step = (result.get("next_step") or "").lower()
+    assert "freeze hiring" in next_step
+    assert "healthy bands" not in next_step
+    blocking = " ".join(result.get("blocking_factors") or []).lower()
+    assert "team size" in blocking
+
+
 def test_startup_roadmap_idea_validation():
     """Low-score venture should land in Idea-validation/Pre-seed with critical blockers flagged."""
     from services.startup_service import get_startup_decision
