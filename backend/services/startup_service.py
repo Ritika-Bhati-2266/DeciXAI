@@ -482,7 +482,9 @@ def _bounded_team_target(current: float, target: float) -> float:
 _ROADMAP_HEALTHY_TEAM_MIN = 4
 _ROADMAP_HEALTHY_TEAM_MAX = 10
 _ROADMAP_CAPITAL_OK_USD = 100000.0
-_ROADMAP_EXPERIENCE_OK = 3.0
+# Action-level bar for experience is full READY (5 yrs): a PARTIAL founder
+# (3-5 yrs) still gets actionable advice instead of a false "healthy" fallback.
+_ROADMAP_EXPERIENCE_OK = 5.0
 
 
 def _roadmap_gap_exists(feature: str, funding_usd: float, team_size: float, experience: float) -> bool:
@@ -1256,7 +1258,14 @@ def get_startup_decision(data: dict | None):
             'confidence_ratio': round(confidence / 100.0, 4),
             'summary': f"Startup score returned directly from the trained model: {score}.",
             'insights': positive[:4],
-            'key_factors': [item['impact'] for item in factor_impacts],
+            # Key Driving Factors (PDF-facing): all positive drivers plus only
+            # those negatives Readiness also flags — same filter as blocking.
+            'key_factors': [
+                item['impact'] for item in factor_impacts
+                if float(item.get('value', 0.0)) >= 0 or _blocking_gap_exists(
+                    item.get('factor', ''), funding_usd, team_size, experience,
+                    market_segment, market_type)
+            ],
             'risks': blocking_statements[:4],
             'options': [{'name': option_name, 'score': score}],
             'action_plan': action_plan,

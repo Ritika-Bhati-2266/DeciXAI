@@ -186,7 +186,7 @@ def test_startup_shap_strings_humanized():
         "funding": 300000,
         "team_size": 5,
         "market": "B2B SaaS",
-        "experience": 6,
+        "experience": 4,
     })
     ui_text = " ".join(
         (result.get("risks") or []) + (result.get("blocking_factors") or [])
@@ -194,7 +194,7 @@ def test_startup_shap_strings_humanized():
     )
     assert "SHAP=" not in ui_text
     assert "num__" not in ui_text and "cat__" not in ui_text
-    assert "$300,000" in ui_text
+    assert "4.0 yrs" in ui_text
     debug = ((result.get("meta") or {}).get("shap_debug") or [])
     assert debug and any("SHAP=" in line for line in debug)
 
@@ -315,6 +315,36 @@ def test_startup_boundary_sweep_consistency():
             assert any(suggest_term_of[field] in nxt for field in gaps), (
                 f"f={funding} t={team} e={exp}: next_step names no gap: {nxt[:80]}"
             )
+
+
+def test_startup_key_factors_filtered_like_blocking():
+    """Key Driving Factors (PDF-facing) must not contradict Readiness either."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 300000,
+        "team_size": 5,
+        "market": "B2B SaaS",
+        "experience": 4,
+    })
+    key = " ".join(result.get("key_factors") or []).lower()
+    assert "funding (" not in key and "team size" not in key
+    assert "experience" in key  # the genuine PARTIAL gap stays
+
+
+def test_startup_partial_experience_gets_action():
+    """PARTIAL experience (4 yrs) must yield advice, not a healthy fallback."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 300000,
+        "team_size": 5,
+        "market": "B2B SaaS",
+        "experience": 4,
+    })
+    nxt = (result.get("next_step") or "").lower()
+    assert "healthy bands" not in nxt
+    assert "experience" in nxt
 
 
 def test_startup_roadmap_idea_validation():
