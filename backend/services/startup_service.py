@@ -139,13 +139,19 @@ def _safe_divisor(value: float) -> float:
 
 
 def _startup_decision_label(score: float, experience: float) -> str:
-    if score > 65 and experience < 2:
+    """Decision text aligned to the calibrated score scale (Sep 2026).
+
+    Bands mirror _startup_stage so the headline never contradicts the badge:
+      60+ Investor-ready / 40+ Seed-ready (Promising) /
+      32+ Pre-seed (Average) / below that needs stronger fundamentals.
+    """
+    if score >= 32 and experience < 2:
         return 'Promising but high execution risk'
-    if score >= 85:
+    if score >= 60:
         return 'Investor-ready startup potential'
-    if score > 65:
+    if score >= 40:
         return 'Promising'
-    if score >= 50:
+    if score >= 32:
         return 'Average potential'
     return 'Needs stronger execution fundamentals'
 
@@ -342,11 +348,11 @@ def _coerce_startup_input(data: dict | None) -> dict:
 
 
 def _score_band(score: float) -> tuple[str, str]:
-    if score >= 85:
+    if score >= 60:
         return 'Investor-ready startup potential', 'Investor Ready'
-    if score >= 70:
+    if score >= 40:
         return 'Strong startup potential', 'Strong'
-    if score >= 50:
+    if score >= 32:
         return 'Promising startup potential', 'Promising'
     return 'Needs stronger execution fundamentals', 'Early Stage'
 
@@ -696,7 +702,7 @@ def _build_startup_roadmap(
         ]
         traction_exit = "W4 retention ≥25% + NPS ≥30 on the core wedge."
 
-    if score >= 70:
+    if score >= 40:
         raise_tasks = [
             "Build a data room: metrics, cohort charts, pipeline, burn multiple, and 18-month plan.",
             "Open 30 investor/advisor conversations with a tight 10-slide narrative.",
@@ -744,7 +750,7 @@ def _build_startup_roadmap(
     raise_kpis = [
         'Data room live: cohorts, pipeline, burn multiple, 18-mo plan.',
         '2+ partners in diligence + 6-month pipeline.',
-    ] if score >= 70 else [
+    ] if score >= 40 else [
         f"Runway extended to ≥6 mo (now ~{runway_months} mo).",
         'Traction gate hit before priced raise.',
     ]
@@ -777,7 +783,7 @@ def _build_startup_roadmap(
             'when': 'Days 61-90',
             'why': 'Consumer traction needs retention + referral ownership.',
         })
-    if score >= 70:
+    if score >= 40:
         hiring_plan.append({
             'role': 'Ops / finance discipline (part-time ok)',
             'when': 'Days 91-180',
@@ -824,17 +830,17 @@ def _build_startup_roadmap(
             'kpis': traction_kpis,
         },
         {
-            'phase': 'Raise / Scale' if score >= 70 else 'Extend runway',
+            'phase': 'Raise / Scale' if score >= 40 else 'Extend runway',
             'timeline': 'Days 91-180',
             'focus': (
                 f"Raise ~{_format_money(capital_target, currency)} on traction proof; scale what repeats."
-                if score >= 70 else
+                if score >= 40 else
                 f"Extend runway (~{runway_months} mo left) while hitting traction gates before raising."
             ),
             'tasks': raise_tasks,
             'exit_criteria': (
                 "Term sheet path: 2+ partners in diligence + 6-month pipeline."
-                if score >= 70 else
+                if score >= 40 else
                 "Traction gate hit + 12-month runway plan before a priced raise."
             ),
         },

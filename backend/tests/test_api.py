@@ -142,6 +142,9 @@ def test_startup_roadmap_investor_ready():
     })
     roadmap = _startup_roadmap_of(result)
     assert 30.0 <= float(result.get("score") or 0) <= 55.0
+    # Decision text must agree with the stage badge (no contradiction).
+    assert result.get("decision") == "Average potential"
+    assert roadmap.get("stage") == "Pre-seed"
     meta = result.get("meta") or {}
     assert meta.get("calibration_applied") is True
     assert any("Early-stage adjustment" in str(i) for i in (result.get("insights") or []))
