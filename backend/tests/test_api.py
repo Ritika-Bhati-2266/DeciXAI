@@ -262,6 +262,61 @@ def test_startup_overstaffed_team_action():
     assert "team size" in blocking
 
 
+def test_startup_boundary_sweep_consistency():
+    """Systematic corners: Readiness, Blocking Factors, and Priority Action agree.
+
+    Invariants (correct form — next_step picks ONE real gap, need not be team):
+    - every readiness mismatch/partial appears in Blocking Factors
+    - no READY input appears in Blocking Factors
+    - every gap feature appears somewhere in suggestions; next_step names a gap
+    - 'healthy bands' fallback only when genuinely nothing mismatches
+    """
+    from services.startup_service import get_startup_decision
+
+    combos = [
+        (10000, 2, 1), (10000, 54, 1), (300000, 2, 1), (300000, 6, 5),
+        (300000, 54, 5), (500000, 6, 6), (50000000, 2, 15),
+        (50000000, 54, 15), (300000, 6, 1),
+    ]
+    term_of = {"capital": "funding", "team": "team size", "experience": "experience"}
+    suggest_term_of = {"capital": "funding", "team": "team", "experience": "experience"}
+    for funding, team, exp in combos:
+        result = get_startup_decision({
+            "funding": funding, "team_size": team,
+            "market": "B2B SaaS", "experience": exp,
+        })
+        readiness = (result.get("details") or {}).get("startup_roadmap", {}).get("readiness", {})
+        blocking = " ".join(result.get("blocking_factors") or []).lower()
+        suggestions = " ".join(result.get("suggestions") or []).lower()
+        nxt = (result.get("next_step") or "").lower()
+        gaps = set()
+        for field in ("capital", "team", "experience"):
+            status = readiness.get(field, {}).get("status")
+            if status in ("mismatch", "partial"):
+                gaps.add(field)
+                assert term_of[field] in blocking, (
+                    f"f={funding} t={team} e={exp}: {field} ({status}) missing from blocking"
+                )
+            elif status == "match":
+                if field == "capital":
+                    assert "funding (" not in blocking, f"f={funding} t={team} e={exp}: READY capital blocking"
+                else:
+                    assert term_of[field] not in blocking, (
+                        f"f={funding} t={team} e={exp}: READY {field} blocking"
+                    )
+        for field in gaps:
+            assert suggest_term_of[field] in suggestions, (
+                f"f={funding} t={team} e={exp}: {field} gap missing from suggestions"
+            )
+        if not gaps:
+            assert "healthy bands" in nxt, f"f={funding} t={team} e={exp}: expected healthy fallback"
+        else:
+            assert "healthy bands" not in nxt, f"f={funding} t={team} e={exp}: false healthy fallback"
+            assert any(suggest_term_of[field] in nxt for field in gaps), (
+                f"f={funding} t={team} e={exp}: next_step names no gap: {nxt[:80]}"
+            )
+
+
 def test_startup_roadmap_idea_validation():
     """Low-score venture should land in Idea-validation/Pre-seed with critical blockers flagged."""
     from services.startup_service import get_startup_decision
