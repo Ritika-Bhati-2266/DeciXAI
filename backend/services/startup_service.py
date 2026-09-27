@@ -465,7 +465,7 @@ def _build_action_plan(funding: float, team_size: int, market: str, experience: 
 
 def _bounded_team_target(current: float, target: float) -> float:
     """
-    The startup training data can produce very large 'ideal' team sizes (e.g. 79).
+    The startup training data can produce very large 'ideal' team sizes (e.g. 77).
     That may reflect later-stage companies, but it is not practical early-stage guidance.
     """
     if target != target:
@@ -474,6 +474,100 @@ def _bounded_team_target(current: float, target: float) -> float:
     if current == current:
         bounded = max(bounded, min(max(float(current), 4.0), 12.0))
     return bounded
+
+
+# Roadmap healthy bands are the single source of truth for "what is a gap".
+# Model-profile targets (e.g. team positive_p25 ~= 77) must never contradict them
+# (e.g. telling a healthy team of 5 to grow to 12 while Readiness says "healthy").
+_ROADMAP_HEALTHY_TEAM_MIN = 4
+_ROADMAP_HEALTHY_TEAM_MAX = 10
+_ROADMAP_CAPITAL_OK_USD = 100000.0
+_ROADMAP_EXPERIENCE_OK = 3.0
+
+
+def _roadmap_gap_exists(feature: str, funding_usd: float, team_size: float, experience: float) -> bool:
+    """True only if the deterministic roadmap also sees a gap in this feature."""
+    try:
+        if feature == 'team_size':
+            team = float(team_size)
+            if team != team:
+                return True
+            return not (_ROADMAP_HEALTHY_TEAM_MIN <= team <= _ROADMAP_HEALTHY_TEAM_MAX)
+        if feature == 'funding':
+            funding = float(funding_usd)
+            if funding != funding:
+                return True
+            return funding < _ROADMAP_CAPITAL_OK_USD
+        if feature == 'experience':
+            exp = float(experience)
+            if exp != exp:
+                return True
+            return exp < _ROADMAP_EXPERIENCE_OK
+    except Exception:
+        return True
+    return True
+
+
+_SHAP_FEATURE_LABELS = {
+    'funding': 'Funding',
+    'team_size': 'Team size',
+    'experience': 'Founder experience',
+    'funding_per_team': 'Funding per team member',
+    'runway_score': 'Runway score',
+    'experience_per_team_member': 'Experience share per member',
+    'capital_efficiency': 'Capital efficiency',
+    'market': 'Market positioning',
+}
+
+
+def _format_shap_current(feature: str, current, funding_usd: float, currency: str) -> str | None:
+    """Format a model-frame value for humans (frame holds USD-normalized numbers)."""
+    if feature.startswith('market'):
+        return str(current or '').title() or 'General'
+    try:
+        value = float(current)
+    except Exception:
+        return None
+    if value != value:
+        return None
+    if feature in {'funding', 'funding_per_team'}:
+        amount = value * INR_PER_USD if _normalize_currency(currency) == 'INR' else value
+        return _format_money(amount, currency)
+    if feature == 'team_size':
+        return f'{int(round(value))} people'
+    if feature in {'experience', 'experience_per_team_member'}:
+        return f'{value:.1f} yrs'
+    return f'{value:.2f}'
+
+
+def _humanize_shap(feature: str, shap_value: float, current, funding_usd: float, currency: str) -> str:
+    """Plain-English SHAP impact; raw numbers stay in meta for audit, not in UI text."""
+    base = feature
+    if feature.startswith('market'):
+        base = 'market'
+    label = _SHAP_FEATURE_LABELS.get(base, base.replace('_', ' ').title())
+    direction = 'is lifting the score' if float(shap_value) > 0 else 'is dragging the score down'
+    if base == 'market':
+        seg = str(current or '').strip()
+        if seg and seg != feature:
+            return f'{seg.title()} market positioning {direction}.'
+        return f'Market positioning {direction}.'
+    formatted = _format_shap_current(base, current, funding_usd, currency)
+    if formatted:
+        return f'{label} ({formatted}) {direction}.'
+    return f'{label} {direction}.'
+
+
+def _format_gap_value(feature: str, value: float, currency: str) -> str:
+    # Gap values live in USD-normalized model space; convert back for display.
+    if feature == 'funding':
+        amount = float(value) * INR_PER_USD if _normalize_currency(currency) == 'INR' else float(value)
+        return _format_money(amount, currency)
+    if feature == 'team_size':
+        return f'{int(round(float(value)))} people'
+    if feature == 'experience':
+        return f'{float(value):.1f} yrs'
+    return f'{float(value):,.2f}'
 
 
 def _startup_stage(score: float) -> str:
@@ -998,9 +1092,16 @@ def get_startup_decision(data: dict | None):
         positive = []
         negative = []
         factor_impacts = []
+        shap_debug = []
         for raw_feature, shap_value in model_result.get('raw_shap', [])[:8]:
             feature = raw_feature.replace('num__', '').replace('cat__', '')
-            statement = f"{feature}: SHAP={float(shap_value):+.4f}; current={row.get(feature, feature)}"
+            if feature.startswith('market'):
+                current_value = market
+            else:
+                current_value = row.get(feature, feature)
+            raw_statement = f"{feature}: SHAP={float(shap_value):+.4f}; current={current_value}"
+            shap_debug.append(raw_statement)
+            statement = _humanize_shap(feature, float(shap_value), current_value, funding_usd, currency)
             factor_impacts.append({'factor': feature, 'impact': statement, 'value': round(float(shap_value), 4)})
             if float(shap_value) > 0:
                 positive.append(statement)
@@ -1014,6 +1115,11 @@ def get_startup_decision(data: dict | None):
         action_plan = []
         ranked_gaps = []
         for feature in ['funding', 'team_size', 'experience']:
+            # Roadmap bands decide what counts as a gap; profile targets only
+            # quantify it. This keeps Priority Actions from contradicting the
+            # Readiness panel (e.g. team of 5 is healthy, not a hiring problem).
+            if not _roadmap_gap_exists(feature, funding_usd, team_size, experience):
+                continue
             profile = numeric_profiles.get(feature, {})
             target = profile.get('positive_p25') or profile.get('positive_median')
             if target is None:
@@ -1030,7 +1136,7 @@ def get_startup_decision(data: dict | None):
         updated['funding_per_team'] = updated['funding'] / _safe_divisor(updated['team_size'])
         rerun = predict_with_model('startup', build_runtime_frame('startup', updated))
         what_if = ''
-        if rerun is not None:
+        if rerun is not None and changed:
             what_if = (
                 f"Re-running the startup model after improving {', '.join(changed) or 'top gap features'} "
                 f"changes the score from {round(model_result['probability'] * 100, 2)} to {round(rerun['probability'] * 100, 2)}."
@@ -1040,12 +1146,25 @@ def get_startup_decision(data: dict | None):
         for _, feature, current, target in ranked_gaps[:4]:
             if feature == 'team_size':
                 action_plan.append(
-                    f"Improve team size; current core team is {int(round(float(current)))}. Aim for about {int(round(float(target)))} people to increase execution capacity."
+                    f"Improve team size; current core team is {_format_gap_value('team_size', current, currency)}. Aim for about {_format_gap_value('team_size', target, currency)} to increase execution capacity."
+                )
+            elif feature == 'funding':
+                # Cap the ask at the roadmap's own capital target so the Priority
+                # Action never contradicts the funding plan (e.g. no ₹8cr asks).
+                roadmap_cap = max(float(funding_usd) * 1.8, 200000.0)
+                action_plan.append(
+                    f"Improve funding; currently at {_format_gap_value('funding', current, currency)} — target around {_format_gap_value('funding', min(float(target), roadmap_cap), currency)} to strengthen runway."
                 )
             else:
                 action_plan.append(
-                    f"Improve {feature}; current value {round(float(current), 2)} is below the stronger model profile range near {round(float(target), 2)}."
+                    f"Improve {feature}; current value {_format_gap_value(feature, current, currency)} is below the stronger model profile range near {_format_gap_value(feature, target, currency)}."
                 )
+        if not action_plan:
+            # No roadmap gap found: team, capital, and experience are all in
+            # healthy bands. Say so explicitly instead of inventing a problem.
+            action_plan.append(
+                'Foundations are in healthy bands — prioritize traction milestones and capital efficiency over structural changes.'
+            )
 
         score = round(model_result['probability'] * 100, 2)
         label = _startup_decision_label(score, experience)
@@ -1066,7 +1185,7 @@ def get_startup_decision(data: dict | None):
             'confidence_ratio': round(confidence / 100.0, 4),
             'summary': f"Startup score returned directly from the trained model: {score}.",
             'insights': positive[:4],
-            'key_factors': [f"{item['factor']} ({item['value']:+.4f})" for item in factor_impacts],
+            'key_factors': [item['impact'] for item in factor_impacts],
             'risks': negative[:4],
             'options': [{'name': option_name, 'score': score}],
             'action_plan': action_plan,
@@ -1078,6 +1197,7 @@ def get_startup_decision(data: dict | None):
             'next_step': action_plan[0] if action_plan else '',
             'explanation': ' '.join(positive + negative),
             'suggestions': action_plan[:3],
+            'meta': {'shap_debug': shap_debug},
         }
     merged = response | {
         'intent': 'startup',

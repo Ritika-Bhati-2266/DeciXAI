@@ -158,6 +158,62 @@ def test_startup_roadmap_investor_ready():
     assert roadmap["risk_flags"] == []
 
 
+def test_startup_no_team_gap_when_healthy():
+    """Healthy team (5, in roadmap 4-10 band) must NOT get a grow-team action.
+
+    Regression: model-profile targets (team positive_p25 ~= 77) used to tell
+    a team of 5 to grow to ~12 while Readiness said 'healthy' — a direct
+    contradiction on the same screen.
+    """
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 300000,
+        "team_size": 5,
+        "market": "B2B SaaS",
+        "experience": 6,
+    })
+    blob = " ".join(result.get("action_plan") or []).lower()
+    assert "healthy bands" in blob
+    assert "12 people" not in blob and "about 12" not in blob
+
+
+def test_startup_shap_strings_humanized():
+    """UI-facing SHAP text must be plain English; raw stays in meta for audit."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 300000,
+        "team_size": 5,
+        "market": "B2B SaaS",
+        "experience": 6,
+    })
+    ui_text = " ".join(
+        (result.get("risks") or []) + (result.get("blocking_factors") or [])
+        + (result.get("key_factors") or []) + (result.get("insights") or [])
+    )
+    assert "SHAP=" not in ui_text
+    assert "num__" not in ui_text and "cat__" not in ui_text
+    assert "$300,000" in ui_text
+    debug = ((result.get("meta") or {}).get("shap_debug") or [])
+    assert debug and any("SHAP=" in line for line in debug)
+
+
+def test_startup_funding_target_matches_roadmap():
+    """Priority funding ask must equal the roadmap capital target, not raw profile."""
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 25000,
+        "team_size": 2,
+        "market": "B2B SaaS",
+        "experience": 1,
+    })
+    roadmap = _startup_roadmap_of(result)
+    assert roadmap.get("capital_target") == 200000
+    assert "$200,000" in (result.get("next_step") or "")
+
+
 def test_startup_roadmap_idea_validation():
     """Low-score venture should land in Idea-validation/Pre-seed with critical blockers flagged."""
     from services.startup_service import get_startup_decision
