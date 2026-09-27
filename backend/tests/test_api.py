@@ -214,6 +214,30 @@ def test_startup_funding_target_matches_roadmap():
     assert "$200,000" in (result.get("next_step") or "")
 
 
+def test_startup_blocking_matches_readiness():
+    """Blocking Factors must never contradict the Readiness panel.
+
+    Regression: team of 5 + $300k showed as 'dragging the score down' while
+    Readiness said capital/team READY. Only Experience (PARTIAL) may block here.
+    """
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 300000,
+        "team_size": 5,
+        "market": "B2B SaaS",
+        "experience": 4,
+    })
+    blocking = " ".join(result.get("blocking_factors") or []).lower()
+    assert blocking, "expected Experience to block"
+    assert "experience" in blocking
+    assert "team size" not in blocking
+    assert "funding" not in blocking
+    readiness = (result.get("details") or {}).get("startup_roadmap", {}).get("readiness", {})
+    assert readiness.get("capital", {}).get("status") == "match"
+    assert readiness.get("team", {}).get("status") == "match"
+
+
 def test_startup_roadmap_idea_validation():
     """Low-score venture should land in Idea-validation/Pre-seed with critical blockers flagged."""
     from services.startup_service import get_startup_decision

@@ -508,6 +508,48 @@ def _roadmap_gap_exists(feature: str, funding_usd: float, team_size: float, expe
     return True
 
 
+def _blocking_gap_exists(feature: str, funding_usd: float, team_size: float,
+                         experience: float, market_segment: str = '',
+                         market_type: str = '') -> bool:
+    """Match-level check for Blocking Factors / risks.
+
+    Stricter than _roadmap_gap_exists (which gates *actions*): anything below
+    full READY counts as blocking, so the list can never contradict the
+    Readiness panel (e.g. a READY team of 5 must not appear as 'blocking').
+    Derived model features map to their parent input.
+    """
+    parent = feature
+    if feature in {'funding_per_team', 'runway_score', 'capital_efficiency'}:
+        parent = 'funding'
+    elif feature in {'experience_per_team_member'}:
+        parent = 'experience'
+    elif feature.startswith('market'):
+        parent = 'market'
+    try:
+        if parent == 'team_size':
+            team = float(team_size)
+            if team != team:
+                return True
+            return not (_ROADMAP_HEALTHY_TEAM_MIN <= team <= _ROADMAP_HEALTHY_TEAM_MAX)
+        if parent == 'funding':
+            funding = float(funding_usd)
+            if funding != funding:
+                return True
+            return funding < 200000.0
+        if parent == 'experience':
+            exp = float(experience)
+            if exp != exp:
+                return True
+            return exp < 5.0
+        if parent == 'market':
+            if (market_segment or '') in {'enterprise', 'consumer'}:
+                return False
+            return not (market_type and market_type != 'general')
+    except Exception:
+        return True
+    return True
+
+
 _SHAP_FEATURE_LABELS = {
     'funding': 'Funding',
     'team_size': 'Team size',
@@ -1088,9 +1130,13 @@ def get_startup_decision(data: dict | None):
             'market': market,
             'experience': experience,
             'funding_per_team': funding_usd / _safe_divisor(team_size),
+            'runway_score': min(funding_usd / 300000.0, 2.5),
+            'experience_per_team_member': experience / _safe_divisor(team_size),
+            'capital_efficiency': (funding_usd / _safe_divisor(team_size)) / 100000.0,
         }
         positive = []
         negative = []
+        negative_pairs: list[tuple[str, str]] = []
         factor_impacts = []
         shap_debug = []
         for raw_feature, shap_value in model_result.get('raw_shap', [])[:8]:
@@ -1107,6 +1153,15 @@ def get_startup_decision(data: dict | None):
                 positive.append(statement)
             elif float(shap_value) < 0:
                 negative.append(statement)
+                negative_pairs.append((feature, statement))
+
+        # Blocking Factors / risks only list what Readiness also flags — a READY
+        # input must never appear as "blocking", even if its raw SHAP is negative.
+        blocking_statements = [
+            statement for feature, statement in negative_pairs
+            if _blocking_gap_exists(feature, funding_usd, team_size, experience,
+                                    market_segment, market_type)
+        ]
 
         updated = dict(row)
         profiles = model_result.get('profiles', {}) or {}
@@ -1134,6 +1189,9 @@ def get_startup_decision(data: dict | None):
                 changed.append(feature)
                 ranked_gaps.append((target_value - row[feature], feature, row[feature], target_value))
         updated['funding_per_team'] = updated['funding'] / _safe_divisor(updated['team_size'])
+        updated['runway_score'] = min(updated['funding'] / 300000.0, 2.5)
+        updated['experience_per_team_member'] = updated['experience'] / _safe_divisor(updated['team_size'])
+        updated['capital_efficiency'] = (updated['funding'] / _safe_divisor(updated['team_size'])) / 100000.0
         rerun = predict_with_model('startup', build_runtime_frame('startup', updated))
         what_if = ''
         if rerun is not None and changed:
@@ -1186,11 +1244,11 @@ def get_startup_decision(data: dict | None):
             'summary': f"Startup score returned directly from the trained model: {score}.",
             'insights': positive[:4],
             'key_factors': [item['impact'] for item in factor_impacts],
-            'risks': negative[:4],
+            'risks': blocking_statements[:4],
             'options': [{'name': option_name, 'score': score}],
             'action_plan': action_plan,
             'what_if': what_if,
-            'blocking_factors': negative[:3],
+            'blocking_factors': blocking_statements[:3],
             'probability': model_result['probability'],
             'score_label': score_label,
             'score_band': score_label,
