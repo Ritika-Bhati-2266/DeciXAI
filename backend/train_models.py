@@ -684,8 +684,18 @@ def build_finance_dataset():
 
 
 def build_startup_dataset():
+    """Honest early-stage-aware dataset (fixed Sep 2026).
+
+    - Labels come ONLY from real outcomes (IPO/Acquisition = 1). The old
+      quantile-jugaad (success_quality/funding_quality) inflated accuracy to
+      ~83% and taught the model that only huge later-stage companies succeed.
+    - funding_part (startup_funding.csv) is excluded: it hardcoded
+      team_size=8 / experience=5.0 for every row, i.e. 3k rows of pure noise
+      that destroyed any real team/experience signal.
+    - Early-stage underrepresentation is handled at inference via a disclosed
+      empirical calibration floor (see startup_service), not by faking labels.
+    """
     success_df = pd.read_csv(DATASETS_DIR / 'startup' / 'startup_success_dataset.csv')
-    funding_df = pd.read_csv(DATASETS_DIR / 'startup' / 'startup_funding.csv')
 
     success_part = pd.DataFrame()
     success_part['funding'] = (success_df['funding_rounds'].fillna(0).clip(lower=0) * 1_000_000).astype(float)
@@ -696,38 +706,9 @@ def build_startup_dataset():
     success_part['runway_score'] = (success_part['funding'] / 300000.0).clip(0, 4)
     success_part['experience_per_team_member'] = (success_part['experience'] / success_part['team_size']).clip(0, 10)
     success_part['capital_efficiency'] = (success_part['funding_per_team'] / 100000.0).clip(0, 1000)
-    success_quality = (
-        (success_part['funding'] / 1_000_000).clip(0, 8) * 0.34
-        + success_part['team_size'].clip(1, 20) / 20.0 * 0.18
-        + success_part['experience'].clip(0, 12) / 12.0 * 0.20
-        + success_part['funding_per_team'].clip(0, 500_000) / 500_000.0 * 0.16
-        + success_part['market'].eq('enterprise').astype(float) * 0.12
-    )
-    success_part['target'] = (
-        success_df['outcome'].isin(['IPO', 'Acquisition'])
-        | (success_quality >= success_quality.quantile(0.52))
-    ).astype(int)
+    success_part['target'] = success_df['outcome'].isin(['IPO', 'Acquisition']).astype(int)
 
-    funding_part = pd.DataFrame()
-    funding_part['funding'] = funding_df['Amount in USD'].apply(parse_money_to_usd)
-    funding_part['team_size'] = 8
-    funding_part['market'] = funding_df['Industry Vertical'].apply(map_market)
-    funding_part['experience'] = 5.0
-    funding_part['funding_per_team'] = (funding_part['funding'] / 8.0).clip(0, 100_000_000)
-    funding_part['runway_score'] = (funding_part['funding'] / 300000.0).clip(0, 4)
-    funding_part['experience_per_team_member'] = (funding_part['experience'] / funding_part['team_size']).clip(0, 10)
-    funding_part['capital_efficiency'] = (funding_part['funding_per_team'] / 100000.0).clip(0, 1000)
-    investment_type = funding_df['InvestmentnType'].fillna('').astype(str).str.lower()
-    funding_quality = (
-        funding_part['funding'].fillna(0).clip(0, 5_000_000) / 5_000_000.0 * 0.48
-        + funding_part['funding_per_team'].fillna(0).clip(0, 500_000) / 500_000.0 * 0.18
-        + funding_part['runway_score'].clip(0, 4) / 4.0 * 0.14
-        + funding_part['market'].eq('enterprise').astype(float) * 0.10
-        + investment_type.str.contains('series b|series c|series d|series e|private equity|debt financing').astype(float) * 0.10
-    )
-    funding_part['target'] = (funding_quality >= funding_quality.quantile(0.55)).astype(int)
-
-    combined = pd.concat([success_part, funding_part], ignore_index=True)
+    combined = success_part.copy()
     combined['funding'] = combined['funding'].fillna(combined['funding'].median())
     combined['funding_per_team'] = combined['funding_per_team'].fillna(combined['funding_per_team'].median())
     return combined.dropna()

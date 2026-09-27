@@ -17,9 +17,9 @@
   },
   "startup": {
     "model": "xgboost",
-    "accuracy": 0.8289,
-    "f1": 0.8506,
-    "roc_auc": 0.9027
+    "accuracy": 0.6432,
+    "f1": 0.583,
+    "roc_auc": 0.6889
   },
   "policy": {
     "model": "xgboost",

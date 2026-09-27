@@ -124,7 +124,14 @@ def _startup_roadmap_of(result):
 
 
 def test_startup_roadmap_investor_ready():
-    """High-score venture should reach Investor-ready/Seed-ready with a full 4-phase roadmap."""
+    """Strong early-stage venture gets an honestly calibrated score + full roadmap.
+
+    Honest model (outcome-only labels, Sep 2026) scores 500k/6/6 at ~13% raw;
+    the disclosed early-stage calibration floor lifts it to the empirical
+    200k-1M band rate (35.57%). It must NOT collapse to ~3% anymore, must
+    disclose the adjustment, and must ship a full 4-phase roadmap with no
+    critical blockers for this well-funded team.
+    """
     from services.startup_service import get_startup_decision
 
     result = get_startup_decision({
@@ -134,7 +141,10 @@ def test_startup_roadmap_investor_ready():
         "experience": 6,
     })
     roadmap = _startup_roadmap_of(result)
-    assert roadmap.get("stage") in ("Investor-ready", "Seed-ready")
+    assert 30.0 <= float(result.get("score") or 0) <= 55.0
+    meta = result.get("meta") or {}
+    assert meta.get("calibration_applied") is True
+    assert any("Early-stage adjustment" in str(i) for i in (result.get("insights") or []))
     assert len(roadmap.get("phases") or []) == 4
     for phase in roadmap["phases"]:
         assert phase.get("phase") and phase.get("timeline")

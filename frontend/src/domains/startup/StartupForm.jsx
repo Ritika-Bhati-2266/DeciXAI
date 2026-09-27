@@ -46,17 +46,33 @@ export default function StartupForm({
         {/* Funding */}
         <div className="rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
           <label className="text-[11px] font-black uppercase tracking-wider text-slate-700 block mb-1">
-            Capital Raised / Funding (full amount in ₹/$) <span className="text-rose-500">*</span>
+            Capital Raised / Funding <span className="text-rose-500">*</span>
           </label>
-          <input
-            type="number"
-            min="0"
-            step="10000"
-            value={input.funding ?? ''}
-            onChange={(e) => handleNumericChange('funding', e.target.value)}
-            placeholder="e.g. 2000000 (20 lakh)"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
-          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min="0"
+              step="10000"
+              value={input.funding ?? ''}
+              onChange={(e) => handleNumericChange('funding', e.target.value)}
+              placeholder={input.currency === 'INR' ? 'e.g. 2000000 (20 lakh)' : 'e.g. 250000 ($250k)'}
+              className="flex-1 rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-100"
+            />
+            <select
+              value={input.currency || 'USD'}
+              onChange={(e) => handleChange('currency', e.target.value)}
+              className="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs font-bold text-slate-800 outline-none transition focus:border-sky-500 focus:bg-white"
+              aria-label="Funding currency"
+            >
+              <option value="USD">$ USD</option>
+              <option value="INR">₹ INR</option>
+            </select>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            {input.currency === 'INR'
+              ? 'INR math: ~₹80k burn/head, model normalizes to USD (÷83) for scoring.'
+              : 'USD math: ~$6k burn/head. Model scores in USD.'}
+          </p>
           {fieldErrors.funding && (
             <p className="mt-1 text-[11px] text-rose-500 font-semibold">{fieldErrors.funding}</p>
           )}

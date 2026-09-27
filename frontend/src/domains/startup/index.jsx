@@ -21,6 +21,7 @@ import { useAuth } from '../../components/AuthContext'
 
 const INITIAL_STARTUP_INPUT = {
   funding: 300000,
+  currency: 'USD',
   team_size: 5,
   market: 'B2B SaaS',
   experience: 4,
@@ -140,7 +141,7 @@ export default function StartupDomain() {
       const payload = {
         title: `Startup Evaluation - ${new Date().toLocaleDateString()}`,
         domain: 'startup',
-        summary: `Venture viability for ${input.market} ($${input.funding} funding, team of ${input.team_size})`,
+        summary: `Venture viability for ${input.market} (${input.currency === 'INR' ? '₹' : '$'}${input.funding} funding, team of ${input.team_size})`,
         input: resultInput || input,
         result,
       }
@@ -177,7 +178,7 @@ export default function StartupDomain() {
   const interactiveFields = [
     {
       name: 'funding',
-      label: 'Capital Raised ($)',
+      label: `Capital Raised (${interactiveInput?.currency === 'INR' ? '₹' : '$'})`,
       type: 'number',
       range: { min: 10000, max: 1000000, step: 25000 },
       value: interactiveInput?.funding || 300000,

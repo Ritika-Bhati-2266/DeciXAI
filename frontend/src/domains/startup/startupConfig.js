@@ -10,7 +10,8 @@ export const STARTUP_CONFIG = {
     'Pre-seed stage, raised 150000, 3 engineers, market HealthTech AI, founder experience 3 years',
   ],
   fields: [
-    { name: 'funding', label: 'Funding Capital (full amount in ₹/$)', type: 'number', min: 0, required: true },
+    { name: 'funding', label: 'Funding Capital', type: 'number', min: 0, required: true },
+    { name: 'currency', label: 'Currency', type: 'select', options: ['USD', 'INR'], required: true },
     { name: 'team_size', label: 'Team Size (Headcount)', type: 'number', min: 1, required: true },
     { name: 'market', label: 'Target Market / Vertical', type: 'text', required: true },
     { name: 'experience', label: 'Founder Experience (Years)', type: 'number', min: 0, required: true },
@@ -24,6 +25,7 @@ export const STARTUP_PRESETS = [
     badge: 'DeepTech',
     data: {
       funding: 500000,
+      currency: 'USD',
       team_size: 5,
       market: 'Developer Tools & AI Infrastructure',
       experience: 6,
@@ -35,6 +37,7 @@ export const STARTUP_PRESETS = [
     badge: 'SaaS',
     data: {
       funding: 75000,
+      currency: 'USD',
       team_size: 4,
       market: 'B2B Enterprise Software',
       experience: 4,
@@ -46,6 +49,7 @@ export const STARTUP_PRESETS = [
     badge: 'Fintech',
     data: {
       funding: 750000,
+      currency: 'USD',
       team_size: 8,
       market: 'Digital Banking & Compliance',
       experience: 8,
@@ -57,9 +61,22 @@ export const STARTUP_PRESETS = [
     badge: 'Pre-Seed',
     data: {
       funding: 25000,
+      currency: 'USD',
       team_size: 2,
       market: 'Consumer Productivity',
       experience: 1,
+    },
+  },
+  {
+    label: 'Indian Pre-Seed (₹20L)',
+    desc: 'Indian founding team, INR runway math',
+    badge: 'INR',
+    data: {
+      funding: 2000000,
+      currency: 'INR',
+      team_size: 4,
+      market: 'B2B SaaS',
+      experience: 3,
     },
   },
 ]
@@ -98,19 +115,32 @@ export const parseStartupPrompt = (text) => {
   const marketMatch = text.match(/(?:market|sector|domain|industry)\s*[:=]?\s*([a-zA-Z0-9\s-]+?)(?:,|\.|$)/i)
   const market = marketMatch ? marketMatch[1].trim() : (commaParts[2] || 'Enterprise Software')
   const experience = pickNumber(extractNumber(text, ['experience', 'years']), Number(commaParts[3])) ?? 4
+  // Indian units / symbols imply INR — mirrors backend parse_startup_input.
+  const lower = text.toLowerCase()
+  const currency = /₹|\blakh?s?\b|\blac?s?\b|\bcrores?\b|\bcr\b|\binr\b|\brs\.?\b|\brupee/.test(lower) ? 'INR' : 'USD'
 
   return {
     funding,
+    currency,
     team_size: teamSize,
     market,
     experience,
   }
 }
 
+export const normalizeCurrency = (value) => {
+  const cur = String(value || 'USD').trim().toUpperCase()
+  return ['INR', '₹', 'RS', 'RS.', 'RUPEE', 'RUPEES'].includes(cur) ? 'INR' : 'USD'
+}
+
 export const validateStartupPayload = (payload) => {
   const errors = {}
   if (payload.funding === null || payload.funding === undefined || payload.funding < 0) {
     errors.funding = 'Funding amount is required.'
+  }
+  const cur = String(payload.currency || 'USD').trim().toUpperCase()
+  if (!['USD', 'INR', '₹', 'RS', 'RS.', 'RUPEE', 'RUPEES'].includes(cur)) {
+    errors.currency = 'Currency must be USD or INR.'
   }
   if (!payload.team_size || payload.team_size < 1) {
     errors.team_size = 'Team size must be at least 1.'

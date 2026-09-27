@@ -14,7 +14,86 @@ DEFAULT_STARTUP_INPUT = {
     'team_size': float('nan'),
     'market': '',
     'experience': float('nan'),
+    'currency': 'USD',
 }
+
+# --- Currency handling (fixes 100x ₹/$ mismatch) ---
+# Model was trained on USD amounts. INR inputs are normalized to USD
+# for inference, while runway/roadmap math uses currency-aware burn rates.
+INR_PER_USD = 83.0
+USD_BURN_PER_HEAD = 6000.0
+USD_MIN_BURN = 15000.0
+INR_BURN_PER_HEAD = 80000.0
+INR_MIN_BURN = 200000.0
+
+# --- Early-stage calibration floor (disclosed, empirical) ---
+# The training set underrepresents early-stage startups (team<=10 is only
+# ~3% of rows; funding<500k only ~13%), so raw model scores collapse to
+# ~3-13% for realistic founders. The floor lifts them to the empirical
+# base rate of their funding band. Monotonic marginal bands are used
+# deliberately so more funding can never show a lower score.
+# Measured Sep 2026 on startup_success_dataset.csv (outcome-only labels):
+EARLY_STAGE_TEAM_MAX = 12
+FUNDING_FLOORS = (
+    # (max_funding_usd_inclusive, floor_prob, evidence_note)
+    (200000.0, 0.2881, 'funding<200k base rate 28.8% (n=13550)'),
+    (1000000.0, 0.3557, 'funding 200k-1M base rate 35.6% (n=26945)'),
+    (3000000.0, 0.4737, 'funding 1-3M base rate 47.4% (n=45058)'),
+)
+
+
+def _early_stage_floor(funding_usd: float, team_size: float) -> tuple[float | None, str]:
+    """Return (floor_prob, reason) or (None, reason) if no floor applies."""
+    try:
+        team = float(team_size)
+    except Exception:
+        return None, 'team size unknown, no floor'
+    if team != team or team > EARLY_STAGE_TEAM_MAX:
+        return None, 'not early-stage (team>12), no floor'
+    try:
+        funding = float(funding_usd)
+    except Exception:
+        return None, 'funding unknown, no floor'
+    if funding != funding:
+        return None, 'funding unknown, no floor'
+    for cap, floor, note in FUNDING_FLOORS:
+        if funding <= cap:
+            return floor, f'early-stage adjustment: {note}'
+    return None, 'funding>3M, model handles'
+
+
+def _normalize_currency(value: str | None) -> str:
+    cur = str(value or 'USD').strip().upper()
+    if cur in {'INR', '₹', 'RS', 'RS.', 'RUPEE', 'RUPEES'}:
+        return 'INR'
+    return 'USD'
+
+
+def _funding_to_usd(funding: float, currency: str) -> float:
+    try:
+        amount = float(funding)
+    except Exception:
+        return float('nan')
+    if amount != amount:
+        return amount
+    if _normalize_currency(currency) == 'INR':
+        return amount / INR_PER_USD
+    return amount
+
+
+def _format_money(amount: float, currency: str) -> str:
+    try:
+        value = float(amount)
+    except Exception:
+        return str(amount)
+    symbol = '₹' if _normalize_currency(currency) == 'INR' else '$'
+    return f"{symbol}{value:,.0f}"
+
+
+def _burn_params(currency: str) -> tuple[float, float, int]:
+    if _normalize_currency(currency) == 'INR':
+        return INR_BURN_PER_HEAD, INR_MIN_BURN, 100000
+    return USD_BURN_PER_HEAD, USD_MIN_BURN, 10000
 
 
 def _json_safe_number(value: float):
@@ -31,6 +110,7 @@ def _sanitize_startup_payload(payload: dict | None) -> dict:
     data = dict(payload or {})
     for key in ('funding', 'team_size', 'experience'):
         data[key] = _json_safe_number(data.get(key))
+    data['currency'] = _normalize_currency(data.get('currency', 'USD'))
     return data
 
 
@@ -40,7 +120,11 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(value, maximum))
 
 
-def _round_currency(value: float, step: int = 10000) -> int:
+def _round_currency(value: float, step: int = 10000, currency: str = 'USD') -> int:
+    _, _, default_step = _burn_params(currency)
+    step = step or default_step
+    if _normalize_currency(currency) == 'INR' and step == 10000:
+        step = default_step
     return int(round(value / step) * step)
 
 
@@ -202,8 +286,19 @@ def parse_startup_input(text: str) -> dict:
     market = market_segment or market_type or ''
 
     funding = float('nan')
+    currency = 'USD'
     if funding_match:
-        funding = _parse_number_with_suffix(funding_match.group(1), funding_match.group(2) if funding_match.lastindex and funding_match.lastindex >= 2 else '')
+        suffix = funding_match.group(2) if funding_match.lastindex and funding_match.lastindex >= 2 else ''
+        funding = _parse_number_with_suffix(funding_match.group(1), suffix)
+        # Indian units / symbols imply INR; explicit $/USD implies USD.
+        if str(suffix or '').strip().lower() in {'l', 'lac', 'lacs', 'lakh', 'lakhs', 'cr', 'crore', 'crores'}:
+            currency = 'INR'
+        elif re.search(r'₹|\brs\.?\b|\binr\b|\brupee', lowered):
+            currency = 'INR'
+        elif re.search(r'\$|\busd\b|\bdollar', lowered):
+            currency = 'USD'
+        elif re.search(r'₹', message):
+            currency = 'INR'
 
     team_size = float('nan')
     if team_match:
@@ -221,6 +316,7 @@ def parse_startup_input(text: str) -> dict:
         'market_type': normalized_market['market_type'],
         'market_segment': normalized_market['market_segment'],
         'experience': float(experience),
+        'currency': currency,
     }
 
 
@@ -241,6 +337,7 @@ def _coerce_startup_input(data: dict | None) -> dict:
         'market_type': normalized_market['market_type'],
         'market_segment': normalized_market['market_segment'],
         'experience': _numeric_or_nan(payload.get('experience', DEFAULT_STARTUP_INPUT['experience'])),
+        'currency': _normalize_currency(payload.get('currency', DEFAULT_STARTUP_INPUT.get('currency', 'USD'))),
     }
 
 
@@ -257,6 +354,7 @@ def _score_band(score: float) -> tuple[str, str]:
 
 def _fallback_probability(funding: float, team_size: int, market: str, experience: float) -> float:
     # Simple fallback: average of normalized factors
+    # funding here is always USD-normalized (see get_startup_decision).
     funding_norm = min(funding / 100000, 1.0)  # Normalize to 0-1
     team_norm = min(team_size / 10, 1.0)      # Normalize to 0-1
     exp_norm = min(experience / 5, 1.0)       # Normalize to 0-1
@@ -264,7 +362,7 @@ def _fallback_probability(funding: float, team_size: int, market: str, experienc
     return (funding_norm * 0.4 + team_norm * 0.3 + exp_norm * 0.3) * market_bonus
 
 
-def _build_key_factors(funding: float, team_size: int, market: str, experience: float) -> list[str]:
+def _build_key_factors(funding: float, team_size: int, market: str, experience: float, currency: str = 'USD') -> list[str]:
     factors = []
     if experience > 5:
         factors.append(f'Founder experience is strong at {experience:.1f} years.')
@@ -273,12 +371,14 @@ def _build_key_factors(funding: float, team_size: int, market: str, experience: 
     else:
         factors.append(f'Founder experience is early at {experience:.1f} years.')
 
-    if funding > 100000:
-        factors.append(f'Funding of ${funding:,.0f} gives the company healthier operating runway.')
-    elif funding >= 50000:
-        factors.append(f'Funding of ${funding:,.0f} supports basic early execution but remains tight.')
+    funding_usd = _funding_to_usd(funding, currency)
+    money = _format_money(funding, currency)
+    if funding_usd > 100000:
+        factors.append(f'Funding of {money} gives the company healthier operating runway.')
+    elif funding_usd >= 50000:
+        factors.append(f'Funding of {money} supports basic early execution but remains tight.')
     else:
-        factors.append(f'Funding of ${funding:,.0f} is lean for product, hiring, and distribution needs.')
+        factors.append(f'Funding of {money} is lean for product, hiring, and distribution needs.')
 
     if 4 <= team_size <= 10:
         factors.append(f'Team size of {team_size} is in the practical early-stage operating range.')
@@ -295,9 +395,9 @@ def _build_key_factors(funding: float, team_size: int, market: str, experience: 
     return _dedupe_texts(factors, limit=4)
 
 
-def _build_blocking_factors(funding: float, team_size: int, experience: float) -> list[str]:
+def _build_blocking_factors(funding: float, team_size: int, experience: float, currency: str = 'USD') -> list[str]:
     blocking_factors = []
-    if funding < 50000:
+    if _funding_to_usd(funding, currency) < 50000:
         blocking_factors.append('Low funding limits execution speed')
     if team_size < 4:
         blocking_factors.append('Small team limits product and growth execution')
@@ -306,9 +406,9 @@ def _build_blocking_factors(funding: float, team_size: int, experience: float) -
     return _dedupe_texts(blocking_factors, limit=3)
 
 
-def _build_risks(funding: float, team_size: int, market: str, experience: float) -> list[str]:
+def _build_risks(funding: float, team_size: int, market: str, experience: float, currency: str = 'USD') -> list[str]:
     risks = []
-    if funding < 100000:
+    if _funding_to_usd(funding, currency) < 100000:
         risks.append('Limited runway can slow hiring, experimentation, and customer acquisition.')
     if team_size < 4:
         risks.append('A very small team may struggle to cover product, sales, and operations at once.')
@@ -321,9 +421,11 @@ def _build_risks(funding: float, team_size: int, market: str, experience: float)
     return _dedupe_texts(risks, limit=3)
 
 
-def _build_action_plan(funding: float, team_size: int, market: str, experience: float) -> list[str]:
+def _build_action_plan(funding: float, team_size: int, market: str, experience: float, currency: str = 'USD') -> list[str]:
     suggestions = []
     max_team_target = min(12, max(team_size, math.ceil(team_size * 1.5)))
+    funding_usd = _funding_to_usd(funding, currency)
+    cap = 200000.0 if _normalize_currency(currency) == 'USD' else 200000.0 * INR_PER_USD
 
     if team_size < 4:
         suggested_team = min(4, max_team_target)
@@ -334,11 +436,11 @@ def _build_action_plan(funding: float, team_size: int, market: str, experience: 
     elif team_size > 10:
         suggestions.append('Stabilize ownership and productivity before adding more headcount.')
 
-    if funding < 100000:
-        funding_target = _round_currency(max(funding, min(funding * 1.8, 200000.0)))
+    if funding_usd < 100000:
+        funding_target = _round_currency(max(funding, min(funding * 1.8, cap)), currency=currency)
         if funding_target > funding:
             suggestions.append(
-                f'Plan the next raise around ${funding_target:,.0f} to improve runway without overshooting realistic early-stage needs.'
+                f'Plan the next raise around {_format_money(funding_target, currency)} to improve runway without overshooting realistic early-stage needs.'
             )
 
     if experience <= 5:
@@ -349,7 +451,7 @@ def _build_action_plan(funding: float, team_size: int, market: str, experience: 
     else:
         suggestions.append('Strengthen proof of demand with repeat usage, customer feedback, and a narrower market wedge.')
 
-    if 4 <= team_size <= 10 and funding >= 100000 and experience > 5:
+    if 4 <= team_size <= 10 and funding_usd >= 100000 and experience > 5:
         suggestions.insert(0, 'Prioritize traction milestones and capital efficiency rather than major structural changes.')
 
     return _dedupe_texts(suggestions, limit=3)
@@ -460,6 +562,7 @@ def _build_startup_roadmap(
     score: float,
     market_type: str = '',
     market_segment: str = '',
+    currency: str = 'USD',
 ) -> dict:
     """Deterministic phased execution roadmap for the startup domain.
 
@@ -467,20 +570,25 @@ def _build_startup_roadmap(
     frontend can render a rich roadmap without depending on the LLM.
     Phases are always Validate -> Build -> Traction -> Raise/Scale,
     with tasks tailored to capital / team / experience gaps.
+    `funding` is in the given `currency`; burn math is currency-aware.
     """
+    currency = _normalize_currency(currency)
+    per_head, min_burn, round_step = _burn_params(currency)
     stage = _startup_stage(score)
-    monthly_burn = max(float(team_size) * 6000.0, 15000.0) if team_size > 0 else 15000.0
+    monthly_burn = max(float(team_size) * per_head, min_burn) if team_size > 0 else min_burn
     runway_months = round(float(funding) / monthly_burn, 1) if funding > 0 else 0.0
-    capital_target = _round_currency(max(float(funding) * 1.8, 200000.0))
+    base_target = 200000.0 if currency == 'USD' else 200000.0 * INR_PER_USD
+    capital_target = _round_currency(max(float(funding) * 1.8, base_target), currency=currency)
     team_target = int(min(12, max(4, team_size + 1 if team_size < 4 else team_size)))
+    funding_usd = _funding_to_usd(funding, currency)
 
     market_label = (market or market_type or market_segment or 'your market').strip() or 'your market'
     enterprise_motion = (market_segment or market or '').lower() in {'enterprise'} or 'b2b' in str(market).lower()
 
     readiness = {
         'capital': {
-            'status': _readiness_status(funding >= 200000, partial=funding >= 100000),
-            'label': f"${funding:,.0f} capital / ~{runway_months} mo runway",
+            'status': _readiness_status(funding_usd >= 200000, partial=funding_usd >= 100000),
+            'label': f"{_format_money(funding, currency)} capital / ~{runway_months} mo runway",
         },
         'team': {
             'status': _readiness_status(4 <= team_size <= 10, partial=(team_size == 3 or 11 <= team_size <= 12)),
@@ -498,8 +606,8 @@ def _build_startup_roadmap(
     }
 
     gaps: list[str] = []
-    if funding < 100000:
-        gaps.append(f"Runway is thin (~{runway_months} mo) — target ~${capital_target:,.0f} for 12-18 months of execution.")
+    if funding_usd < 100000:
+        gaps.append(f"Runway is thin (~{runway_months} mo) — target ~{_format_money(capital_target, currency)} for 12-18 months of execution.")
     if team_size < 4:
         gaps.append(f"Team of {team_size} is below the 4-person execution minimum — hire toward ~{team_target} (product + GTM).")
     elif team_size > 10:
@@ -525,7 +633,7 @@ def _build_startup_roadmap(
     if not (market_segment or '') in {'enterprise', 'consumer'} and (not market_type or market_type == 'general'):
         risk_flags.append("CRITICAL: No clear market wedge — validation will stall without one ICP and use case.")
 
-    thin_runway = funding < 100000
+    thin_runway = funding_usd < 100000
     small_team = team_size < 4
     junior_founder = experience < 3
 
@@ -665,13 +773,15 @@ def _build_startup_roadmap(
             'why': 'Raise readiness needs burn-multiple + reporting rigor.',
         })
 
-    monthly_burn = max(float(team_size) * 6000.0, 15000.0) if team_size > 0 else 15000.0
+    monthly_burn = max(float(team_size) * per_head, min_burn) if team_size > 0 else min_burn
     funding_plan = {
         'monthly_burn': int(round(monthly_burn)),
+        'burn_currency': currency,
         'runway_months': runway_months,
         'capital_target': capital_target,
+        'capital_currency': currency,
         'use_of_funds': [
-            f"Product + GTM hires (~60% of ${capital_target:,.0f}).",
+            f"Product + GTM hires (~60% of {_format_money(capital_target, currency)}).",
             'Traction experiments + pilots (~25%).',
             'Ops buffer + compliance (~15%).',
         ],
@@ -706,7 +816,7 @@ def _build_startup_roadmap(
             'phase': 'Raise / Scale' if score >= 70 else 'Extend runway',
             'timeline': 'Days 91-180',
             'focus': (
-                f"Raise ~${capital_target:,.0f} on traction proof; scale what repeats."
+                f"Raise ~{_format_money(capital_target, currency)} on traction proof; scale what repeats."
                 if score >= 70 else
                 f"Extend runway (~{runway_months} mo left) while hitting traction gates before raising."
             ),
@@ -727,6 +837,7 @@ def _build_startup_roadmap(
         'phases': phases,
         'runway_months': runway_months,
         'capital_target': capital_target,
+        'currency': currency,
         'team_target': team_target,
         'vertical': {'type': (market_type or 'general'), 'label': vertical.get('label', 'General')},
         'hiring_plan': hiring_plan[:5],
@@ -739,14 +850,15 @@ def _build_startup_roadmap(
     }
 
 
-def _build_startup_response(score: float, funding: float, team_size: int, market: str, experience: float, market_segment: str | None = None) -> dict:
+def _build_startup_response(score: float, funding: float, team_size: int, market: str, experience: float, market_segment: str | None = None, currency: str = 'USD') -> dict:
     label = _startup_decision_label(score, experience)
     confidence = _calculate_startup_confidence(score, experience, funding, team_size, market_segment or market)
     score_label = 'Fallback Estimate' if confidence < 40 else label
-    key_factors = _build_key_factors(funding, team_size, market, experience)
-    blocking_factors = _build_blocking_factors(funding, team_size, experience)
-    risks = _build_risks(funding, team_size, market, experience)
-    action_plan = _build_action_plan(funding, team_size, market, experience)
+    key_factors = _build_key_factors(funding, team_size, market, experience, currency)
+    blocking_factors = _build_blocking_factors(funding, team_size, experience, currency)
+    risks = _build_risks(funding, team_size, market, experience, currency)
+    action_plan = _build_action_plan(funding, team_size, market, experience, currency)
+    funding_usd = _funding_to_usd(funding, currency)
 
     summary_parts = [
         f'The startup scores {score:.1f}/100 based on capital, team shape, founder experience, and market context.'
@@ -758,8 +870,9 @@ def _build_startup_response(score: float, funding: float, team_size: int, market
 
     summary = _clean_sentence(' '.join(summary_parts))
     what_if_score = min(100, int(round(score + 10)))
+    well_funded = funding_usd >= 100000
     insights = [
-        f'Funding ({"+8%" if funding >= 100000 else "-8%"}) {"improves" if funding >= 100000 else "reduces"} operating runway.',
+        f'Funding ({"+8%" if well_funded else "-8%"}) {"improves" if well_funded else "reduces"} operating runway.',
         f'Team size ({"+6%" if 4 <= team_size <= 10 else "-6%"}) {"supports" if 4 <= team_size <= 10 else "limits"} execution capacity.',
         f'Founder experience ({"+7%" if experience >= 3 else "-7%"}) {"reduces" if experience >= 3 else "increases"} execution risk.',
     ]
@@ -796,6 +909,9 @@ def get_startup_decision(data: dict | None):
     team_size = startup['team_size']
     market = startup['market']
     experience = startup['experience']
+    currency = _normalize_currency(startup.get('currency', 'USD'))
+    # Model was trained on USD — normalize once, use everywhere for inference.
+    funding_usd = _funding_to_usd(funding, currency)
 
     missing = []
     if math.isnan(funding):
@@ -829,21 +945,21 @@ def get_startup_decision(data: dict | None):
     market_type = startup.get('market_type', '')
     market_segment = startup.get('market_segment', market)
     feature_values = {
-        'funding': funding,
+        'funding': funding_usd,
         'team_size': team_size,
         'market': market,
         'experience': experience,
-        'funding_per_team': funding / _safe_divisor(team_size),
-        'runway_score': min(funding / 300000.0, 2.5),
+        'funding_per_team': funding_usd / _safe_divisor(team_size),
+        'runway_score': min(funding_usd / 300000.0, 2.5),
         'experience_per_team_member': experience / _safe_divisor(team_size),
-        'capital_efficiency': (funding / _safe_divisor(team_size)) / 100000.0,
+        'capital_efficiency': (funding_usd / _safe_divisor(team_size)) / 100000.0,
     }
     model_frame = build_runtime_frame('startup', feature_values)
 
     model_result = predict_with_model('startup', model_frame)
     if model_result is None:
-        fallback_prob = _fallback_probability(funding, team_size, market, experience)
-        response = _build_startup_response(fallback_prob * 100, funding, team_size, market, experience, market_segment)
+        fallback_prob = _fallback_probability(funding_usd, team_size, market, experience)
+        response = _build_startup_response(fallback_prob * 100, funding, team_size, market, experience, market_segment, currency)
         response['insights'] = []
         response['risks'] = []
         response['action_plan'] = []
@@ -856,11 +972,11 @@ def get_startup_decision(data: dict | None):
         response['decision_band'] = response['score_label']
     else:
         row = {
-            'funding': funding,
+            'funding': funding_usd,
             'team_size': team_size,
             'market': market,
             'experience': experience,
-            'funding_per_team': funding / _safe_divisor(team_size),
+            'funding_per_team': funding_usd / _safe_divisor(team_size),
         }
         positive = []
         negative = []
@@ -952,6 +1068,53 @@ def get_startup_decision(data: dict | None):
         'parsed_input': _sanitize_startup_payload(startup),
     }
 
+    # Disclosed early-stage calibration: lift raw model scores that collapse
+    # for realistic founders to the empirical base rate of their band.
+    try:
+        raw_prob = float(merged.get('probability', 0.0) or 0.0)
+    except Exception:
+        raw_prob = 0.0
+    floor, floor_reason = _early_stage_floor(funding_usd, team_size)
+    if floor is not None and raw_prob < floor:
+        calibrated_prob = floor
+        calibrated_score = round(floor * 100, 2)
+        label = _startup_decision_label(calibrated_score, experience)
+        confidence = _calculate_startup_confidence(
+            calibrated_score, experience, funding, team_size, market_segment)
+        score_label = 'Fallback Estimate' if confidence < 40 else label
+        disclosure = (
+            f'Early-stage adjustment applied (+{(floor - raw_prob) * 100:.1f} pts): '
+            f'{floor_reason}. Raw model scored {raw_prob * 100:.1f} but has '
+            'limited early-stage training data (team<=10 is ~3% of rows).'
+        )
+        merged['probability'] = round(calibrated_prob, 4)
+        merged['score'] = calibrated_score
+        merged['decision'] = label
+        merged['decision_band'] = score_label
+        merged['band'] = score_label
+        merged['score_label'] = score_label
+        merged['score_band'] = score_label
+        merged['confidence'] = confidence
+        merged['confidence_ratio'] = round(confidence / 100.0, 4)
+        merged['summary'] = (
+            f'Startup score {calibrated_score} after early-stage calibration '
+            f'(raw model {round(raw_prob * 100, 2)}).'
+        )
+        merged['insights'] = list(merged.get('insights') or []) + [disclosure]
+        merged['explanation'] = ' '.join(
+            [str(merged.get('explanation') or ''), disclosure]).strip()
+        merged['meta'] = dict(merged.get('meta') or {}) | {
+            'calibration_applied': True,
+            'raw_probability': round(raw_prob, 4),
+            'calibration_floor': floor,
+            'calibration_reason': floor_reason,
+        }
+    else:
+        merged['meta'] = dict(merged.get('meta') or {}) | {
+            'calibration_applied': False,
+            'raw_probability': round(raw_prob, 4),
+        }
+
     try:
         roadmap = _build_startup_roadmap(
             float(funding),
@@ -961,13 +1124,18 @@ def get_startup_decision(data: dict | None):
             float(merged.get('score', 0.0) or 0.0),
             market_type=str(market_type or ''),
             market_segment=str(market_segment or ''),
+            currency=currency,
         )
         merged['details'] = dict((merged.get('details') or {}))
         merged['details']['startup_roadmap'] = roadmap
+        merged['meta'] = dict((merged.get('meta') or {}))
+        merged['meta']['currency'] = currency
+        merged['meta']['funding_usd'] = round(float(funding_usd), 2)
+        merged['meta']['inr_per_usd'] = INR_PER_USD
         merged['followup_questions'] = [
             'Who is the single ICP for the next 30 days (title + segment)?',
             'Which 3 design partners will use the MVP weekly?',
-            f"What traction gate unlocks the next ${roadmap.get('capital_target', 200000):,.0f} raise?",
+            f"What traction gate unlocks the next {_format_money(roadmap.get('capital_target', 200000), currency)} raise?",
         ]
     except Exception:
         pass
@@ -976,6 +1144,8 @@ def get_startup_decision(data: dict | None):
         domain="startup",
         user_input={
             "funding": funding,
+            "funding_usd": funding_usd,
+            "currency": currency,
             "team_size": team_size,
             "experience": experience,
             "market": market,
