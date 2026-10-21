@@ -158,6 +158,44 @@ def test_startup_roadmap_investor_ready():
     assert roadmap["risk_flags"] == []
 
 
+def test_startup_roadmap_enriched_fields():
+    """Roadmap ships actionable extras: owners, deliverables, week-one plan, cadence, burn gates.
+
+    These power the interactive StartupRoadmapCard UI; every phase must carry
+    an owner + concrete deliverables, and the plan must include immediate
+    next-7-days actions, a weekly operating cadence, and currency-aware
+    burn checkpoints that scale linearly with monthly burn.
+    """
+    from services.startup_service import get_startup_decision
+
+    result = get_startup_decision({
+        "funding": 500000,
+        "team_size": 6,
+        "market": "B2B SaaS",
+        "experience": 6,
+    })
+    roadmap = _startup_roadmap_of(result)
+
+    for phase in roadmap["phases"]:
+        assert phase.get("owner"), f"phase {phase.get('phase')} missing owner"
+        deliverables = phase.get("deliverables") or []
+        assert len(deliverables) >= 2, f"phase {phase.get('phase')} missing deliverables"
+
+    next_7 = roadmap.get("next_7_days") or []
+    assert 3 <= len(next_7) <= 6
+    assert any("interview" in t.lower() for t in next_7)
+
+    cadence = roadmap.get("weekly_cadence") or []
+    assert len(cadence) >= 2
+
+    burn = roadmap.get("burn_checkpoints") or []
+    assert len(burn) == 3
+    spends = [c["expected_spend"] for c in burn]
+    assert all(isinstance(s, int) and s > 0 for s in spends)
+    assert spends[1] == spends[0] * 2 and spends[2] == spends[0] * 3
+    assert all(c.get("gate") for c in burn)
+
+
 def test_startup_no_team_gap_when_healthy():
     """Healthy team (5, in roadmap 4-10 band) must NOT get a grow-team action.
 

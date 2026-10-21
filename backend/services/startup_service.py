@@ -929,6 +929,57 @@ def _build_startup_roadmap(
         })
 
     monthly_burn = max(float(team_size) * per_head, min_burn) if team_size > 0 else min_burn
+
+    # Immediate, profile-aware actions for the first week of execution.
+    next_7_days: list[str] = [
+        f"Book 10 discovery interviews with {market_label} buyers — 5 completed by Friday.",
+        "Write the one-page thesis: ICP, problem, why-now, and willingness-to-pay.",
+    ]
+    if thin_runway:
+        next_7_days.append(f"Compute true weekly burn (salaries + tools + contracts) against ~{runway_months} mo runway; cut non-critical spend today.")
+    else:
+        next_7_days.append("Set the operating baseline: metrics sheet (activation, retention, burn) reviewed every Monday.")
+    if small_team:
+        next_7_days.append(f"Draft the role spec for hire #1 (product + GTM) — target ~{team_target} before the build phase.")
+    if junior_founder:
+        next_7_days.append("Shortlist 3 domain advisors and send warm asks with the one-paragraph thesis.")
+    if enterprise_motion:
+        next_7_days.append("List 20 target accounts; identify champion + economic buyer for each.")
+    else:
+        next_7_days.append(f"Set up analytics before any growth work — activation and W1/W4 retention for {market_label}.")
+    next_7_days = next_7_days[:6]
+
+    # Operating rhythm that keeps the roadmap honest week over week.
+    weekly_cadence: list[str] = [
+        'Monday: 30-min metrics review — activation, retention, burn, runway.',
+        'Friday: demo day — ship something visible; log partner feedback within 48h.',
+    ]
+    if enterprise_motion:
+        weekly_cadence.append('Friday: pipeline review — every pilot’s champion, blocker, and next step.')
+    else:
+        weekly_cadence.append('Weekly: cohort check — W4 retention trend and K-factor for the referral loop.')
+    if junior_founder:
+        weekly_cadence.append('Weekly: 30-min advisor decision review on the top bet and the kill list.')
+
+    # Currency-aware cumulative spend checkpoints derived from monthly burn.
+    burn_checkpoints: list[dict] = [
+        {
+            'checkpoint': 'Day 30',
+            'expected_spend': int(round(monthly_burn)),
+            'gate': '5 design partners signed.',
+        },
+        {
+            'checkpoint': 'Day 60',
+            'expected_spend': int(round(monthly_burn * 2)),
+            'gate': 'Live MVP with weekly-active partners.',
+        },
+        {
+            'checkpoint': 'Day 90',
+            'expected_spend': int(round(monthly_burn * 3)),
+            'gate': traction_exit,
+        },
+    ]
+
     funding_plan = {
         'monthly_burn': int(round(monthly_burn)),
         'burn_currency': currency,
@@ -947,6 +998,12 @@ def _build_startup_roadmap(
             'phase': 'Validate',
             'timeline': 'Days 0-30',
             'focus': f"Nail one ICP and one painful problem in {market_label}.",
+            'owner': 'Founder-led',
+            'deliverables': [
+                'ICP + problem one-pager',
+                '5 recorded buyer interviews',
+                'Willingness-to-pay evidence (LOI or email)',
+            ],
             'tasks': validate_tasks,
             'exit_criteria': "5 design partners + willingness-to-pay evidence in writing.",
             'kpis': validate_kpis,
@@ -955,6 +1012,12 @@ def _build_startup_roadmap(
             'phase': 'Build MVP',
             'timeline': 'Days 31-60',
             'focus': "Ship the smallest lovable product with analytics from day one.",
+            'owner': 'Product + founding team',
+            'deliverables': [
+                'Live MVP behind feature flags',
+                'Analytics event dashboard',
+                'Onboarding flow under 40% drop-off',
+            ],
             'tasks': build_tasks,
             'exit_criteria': "Live MVP with ≥3 active design partners using it weekly.",
             'kpis': build_kpis,
@@ -963,6 +1026,20 @@ def _build_startup_roadmap(
             'phase': 'Traction',
             'timeline': 'Days 61-90',
             'focus': "Prove repeatable demand, not vanity growth.",
+            'owner': 'Founder-led sales' if enterprise_motion else 'Full team',
+            'deliverables': (
+                [
+                    '3-5 paid pilots with success criteria',
+                    'First customer case study',
+                    'Weekly funnel report (activation → paid)',
+                ]
+                if enterprise_motion else
+                [
+                    'Cohort retention dashboard',
+                    'Referral loop live and measured',
+                    '2 growth posts per week in ICP channels',
+                ]
+            ),
             'tasks': traction_tasks,
             'exit_criteria': traction_exit,
             'kpis': traction_kpis,
@@ -970,6 +1047,20 @@ def _build_startup_roadmap(
         {
             'phase': 'Raise / Scale' if score >= 40 else 'Extend runway',
             'timeline': 'Days 91-180',
+            'owner': 'Founder + advisors',
+            'deliverables': (
+                [
+                    'Investor data room',
+                    '10-slide round narrative',
+                    '18-month use-of-funds plan',
+                ]
+                if score >= 40 else
+                [
+                    'Bridge plan (revenue / angels / grants)',
+                    'Cut-burn budget to 6+ mo runway',
+                    'Traction-gate tracker before any priced raise',
+                ]
+            ),
             'focus': (
                 f"Raise ~{_format_money(capital_target, currency)} on traction proof; scale what repeats."
                 if score >= 40 else
@@ -990,6 +1081,9 @@ def _build_startup_roadmap(
         'gaps': _dedupe_texts(gaps, limit=4),
         'risk_flags': _dedupe_texts(risk_flags, limit=5),
         'phases': phases,
+        'next_7_days': _dedupe_texts(next_7_days, limit=6),
+        'weekly_cadence': weekly_cadence,
+        'burn_checkpoints': burn_checkpoints,
         'runway_months': runway_months,
         'capital_target': capital_target,
         'currency': currency,
